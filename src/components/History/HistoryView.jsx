@@ -58,9 +58,9 @@ const HistoryView = ({ logs, onExport, onImport, user, onSaveFood, myFoods }) =>
             setIntervalsLoading(true);
             setIntervalsError(null);
             try {
-                // Fetch extra days back for averages
+                // Fetch extra days back to ensure 60-day baseline availability
                 const loadFrom = new Date(dateFrom);
-                loadFrom.setDate(loadFrom.getDate() - 30);
+                loadFrom.setDate(loadFrom.getDate() - 90); // Load 90 days explicitly for baselines
                 const fromStr = loadFrom.toISOString().split('T')[0];
 
                 const apiUrl = `https://intervals.icu/api/v1/athlete/${ATHLETE_ID}/wellness?oldest=${fromStr}&newest=${dateTo}`;
@@ -81,9 +81,12 @@ const HistoryView = ({ logs, onExport, onImport, user, onSaveFood, myFoods }) =>
         fetchIntervals();
     }, [dateFrom, dateTo]);
 
-    // Calculate Normality Bands (from Streamlit code)
+    // Calculate Normality Bands (matching Streamlit Python code exactly)
     const calculateNormalityBands = (data) => {
-        if (!data || data.length < 21) {
+        // Use last 60 days for bands calculation (matching Streamlit)
+        const last60Days = data.slice(0, 60);
+
+        if (!last60Days || last60Days.length < 21) {
             return {
                 hrv_mean: null, hrv_std: null, hrv_upper: null, hrv_lower: null,
                 rhr_mean: null, rhr_std: null, rhr_upper: null, rhr_lower: null
@@ -93,10 +96,12 @@ const HistoryView = ({ logs, onExport, onImport, user, onSaveFood, myFoods }) =>
         const bands = {};
 
         // HRV Bands
-        const hrvData = data.filter(d => d.hrv).map(d => d.hrv);
+        const hrvData = last60Days.filter(d => d.hrv).map(d => d.hrv);
         if (hrvData.length >= 21) {
             const hrvMean = hrvData.reduce((sum, val) => sum + val, 0) / hrvData.length;
-            const hrvVariance = hrvData.reduce((sum, val) => sum + Math.pow(val - hrvMean, 2), 0) / hrvData.length;
+            // Use N-1 (sample variance) to match Pandas default behavior
+            const denominator = hrvData.length > 1 ? hrvData.length - 1 : 1;
+            const hrvVariance = hrvData.reduce((sum, val) => sum + Math.pow(val - hrvMean, 2), 0) / denominator;
             const hrvStd = Math.sqrt(hrvVariance);
 
             bands.hrv_mean = hrvMean;
@@ -117,10 +122,12 @@ const HistoryView = ({ logs, onExport, onImport, user, onSaveFood, myFoods }) =>
         }
 
         // RHR Bands
-        const rhrData = data.filter(d => d.restingHR).map(d => d.restingHR);
+        const rhrData = last60Days.filter(d => d.restingHR).map(d => d.restingHR);
         if (rhrData.length >= 21) {
             const rhrMean = rhrData.reduce((sum, val) => sum + val, 0) / rhrData.length;
-            const rhrVariance = rhrData.reduce((sum, val) => sum + Math.pow(val - rhrMean, 2), 0) / rhrData.length;
+            // Use N-1 (sample variance) to match Pandas default behavior
+            const denominator = rhrData.length > 1 ? rhrData.length - 1 : 1;
+            const rhrVariance = rhrData.reduce((sum, val) => sum + Math.pow(val - rhrMean, 2), 0) / denominator;
             const rhrStd = Math.sqrt(rhrVariance);
 
             bands.rhr_mean = rhrMean;
@@ -553,74 +560,125 @@ const HistoryView = ({ logs, onExport, onImport, user, onSaveFood, myFoods }) =>
                                 const displayIdx = intervalsData.findIndex(d => d.id === displayData.id);
                                 const yesterday = intervalsData[displayIdx + 1];
 
-                                // BASELINE CALCULATION:
-                                // Use data PRIOR to the displayed date for baselines (standard 'deviation from normal' logic)
-                                // If displayIdx is 0 (Today), baseline starts at index 1 (Yesterday)
-                                const baselineStart = displayIdx + 1;
-                                const baselineData = intervalsData.slice(baselineStart);
+                                // BASELINE CALCULATION - INCLUDE TODAY (matching Python's df_including_today)
+                                const dataIncludingToday = [displayData, ...intervalsData.slice(displayIdx + 1)];
 
-                                const last7Days = baselineData.slice(0, 7).filter(d => d.hrv && d.restingHR);
-                                const last21Days = baselineData.slice(0, 21).filter(d => d.hrv && d.restingHR);
+                                // Helper for Independent Record-Based Averages (Matches Streamlit's tail(N))
+                                const getMetricAvg = (data, window, metric) => {
+                                    const subset = data.slice(0, window).filter(d => d[metric] != null && !isNaN(d[metric]));
+                                    if (subset.length === 0) return null;
+                                    return subset.reduce((sum, d) => sum + d[metric], 0) / subset.length;
+                                };
 
-                                const avgHRV = last7Days.reduce((sum, d) => sum + d.hrv, 0) / Math.max(1, last7Days.length);
-                                const avgHRV21 = last21Days.reduce((sum, d) => sum + d.hrv, 0) / Math.max(1, last21Days.length);
-                                const avgRHR21 = last21Days.reduce((sum, d) => sum + d.restingHR, 0) / Math.max(1, last21Days.length);
-                                const avgSleep7 = last7Days.filter(d => d.sleepScore).slice(0, 7).reduce((sum, d) => sum + (d.sleepScore || 0), 0) / Math.max(1, last7Days.filter(d => d.sleepScore).length);
-                                const avgSleep21 = last21Days.filter(d => d.sleepScore).slice(0, 21).reduce((sum, d) => sum + (d.sleepScore || 0), 0) / Math.max(1, last21Days.filter(d => d.sleepScore).length);
+                                const avgHRV = getMetricAvg(dataIncludingToday, 7, 'hrv');
+                                const avgHRV21 = getMetricAvg(dataIncludingToday, 21, 'hrv');
+                                const avgRHR21 = getMetricAvg(dataIncludingToday, 21, 'restingHR');
+                                const avgSleep7 = getMetricAvg(dataIncludingToday, 7, 'sleepScore');
+                                const avgSleep21 = getMetricAvg(dataIncludingToday, 21, 'sleepScore');
 
-                                // HRV Score (50%)
-                                let hrvScore = 60;
+                                // HRV Score (40%) - v4.8 Linear 72.5-Base
+                                let hrvScore = 72.5;
                                 if (avgHRV && avgHRV21) {
                                     const trendRatio = avgHRV / avgHRV21;
-                                    if (trendRatio >= 1.0) hrvScore = 75 + (trendRatio - 1) * 50;
-                                    else hrvScore = 60 + (trendRatio - 0.9) * 100;
+                                    hrvScore = 72.5 + (trendRatio - 1) * 50;
                                 }
                                 hrvScore = Math.max(0, Math.min(100, hrvScore));
 
-                                // RHR Score (15%)
-                                let rhrScore = 60;
+                                // RHR Score (20%) - v4.8 Linear 72.5-Base
+                                let rhrScore = 72.5;
                                 if (displayData.restingHR && avgRHR21) {
                                     const deviation = displayData.restingHR - avgRHR21;
-                                    if (deviation <= 1) rhrScore = 90;
-                                    else if (deviation <= 2) rhrScore = 75;
-                                    else if (deviation <= 3) rhrScore = 65;
-                                    else rhrScore = 55;
+                                    rhrScore = 72.5 - (deviation * 4); // Continuous linear logic
                                 }
                                 rhrScore = Math.max(0, Math.min(100, rhrScore));
 
-                                // Sleep Score (20%)
-                                let sleepScore = 65;
+                                // Sleep Score (25%) - v4.8 Linear 72.5-Base
+                                let sleepScore = 72.5;
                                 if (avgSleep7 && avgSleep21) {
                                     const ratio = avgSleep7 / avgSleep21;
-                                    if (ratio >= 1.0) sleepScore = 80 + (ratio - 1) * 40;
-                                    else sleepScore = 65 + (ratio - 0.9) * 100;
+                                    sleepScore = 72.5 + (ratio - 1) * 40;
                                 }
                                 sleepScore = Math.max(0, Math.min(100, sleepScore));
 
-                                // TSB Score (15%) - use yesterday's data relative to display date
+                                // TSB Score (15%) - v4.8 Linear 72.5-Base
                                 const tsb = (yesterday?.ctl != null && yesterday?.atl != null) ? yesterday.ctl - yesterday.atl : null;
-                                let tsbScore = 70;
+                                let tsbScore = 72.5;
                                 if (tsb != null) {
-                                    if (tsb > -10) tsbScore = 75 + (tsb / 10) * 25;
-                                    else tsbScore = 50;
+                                    tsbScore = 72.5 + tsb;
                                 }
                                 tsbScore = Math.max(0, Math.min(100, tsbScore));
 
-                                const ier = (0.50 * hrvScore + 0.15 * rhrScore + 0.20 * sleepScore + 0.15 * tsbScore);
+                                const ier = (0.40 * hrvScore + 0.20 * rhrScore + 0.25 * sleepScore + 0.15 * tsbScore);
 
-                                // Readiness
-                                let readiness = 50;
-                                if (displayData.hrv && avgHRV) {
-                                    const hrvDelta = ((displayData.hrv - avgHRV) / avgHRV) * 100;
-                                    readiness += hrvDelta * 0.6;
+                                // READINESS CALCULATION (Python "Points" logic)
+                                // 1. Calculate Baselines (Recovery Baseline for RHR)
+                                let rhrBaselineRec = null;
+                                let hrvMeanHist = null;
+                                let hrvStdHist = null;
+
+                                // History for baseline (last 60 days FROM YESTERDAY - effectively excluding today for baseline establishment per v4.4 spec)
+                                // Python: calculate_baselines(past_df) where past_df = df_including_today.iloc[:-1]
+                                // So baselines use data up to Yesterday.
+                                // History for baseline (60 records effectively excluding today)
+                                const history60 = dataIncludingToday.slice(1, 61);
+
+                                if (history60.length >= 7) {
+                                    // HRV Historic Baseline
+                                    const hrvVals = history60.filter(d => d.hrv).map(d => d.hrv);
+                                    if (hrvVals.length > 0) {
+                                        hrvMeanHist = hrvVals.reduce((a, b) => a + b, 0) / hrvVals.length;
+                                        // Use N-1 (Bessel's correction) to match Pandas default std()
+                                        const denominator = hrvVals.length > 1 ? hrvVals.length - 1 : 1;
+                                        const variance = hrvVals.reduce((a, b) => a + Math.pow(b - hrvMeanHist, 2), 0) / denominator;
+                                        hrvStdHist = Math.sqrt(variance);
+                                    }
+
+                                    // RHR Recovery Baseline (Days where ATL is < 40th percentile)
+                                    // Filter out days without ATL
+                                    const atlVals = history60.filter(d => d.atl !== undefined).map(d => d.atl).sort((a, b) => a - b);
+                                    if (atlVals.length > 0) {
+                                        const q40Idx = Math.floor(atlVals.length * 0.4);
+                                        const atlThreshold = atlVals[q40Idx];
+
+                                        // Get days with low ATL (Recovery days)
+                                        const recoveryDays = history60.filter(d => d.atl !== undefined && d.atl < atlThreshold && d.restingHR);
+                                        if (recoveryDays.length > 0) {
+                                            rhrBaselineRec = recoveryDays.reduce((sum, d) => sum + d.restingHR, 0) / recoveryDays.length;
+                                        }
+                                    }
                                 }
-                                if (displayData.restingHR && avgRHR21) {
-                                    const rhrDelta = ((avgRHR21 - displayData.restingHR) / avgRHR21) * 100;
-                                    readiness += rhrDelta * 0.25;
+
+                                // 2. Calculate Points
+                                let readiness = 0;
+                                let debugPoints = { sleep: 0, rhr: 0, hrv: 0 };
+
+                                // Sleep Points: compare MA7 vs MA28 (Python uses tail(28))
+                                // v4.6 fix: Record-based independent averages
+                                const avgSleep28 = getMetricAvg(dataIncludingToday, 28, 'sleepScore');
+
+                                if (avgSleep7 && avgSleep28) {
+                                    if (avgSleep7 >= avgSleep28) { readiness += 15; debugPoints.sleep = 15; }
+                                    else if (avgSleep7 > avgSleep28 * 0.95) { readiness += 12; debugPoints.sleep = 12; }
+                                    else if (avgSleep7 >= avgSleep28 * 0.90) { readiness += 7; debugPoints.sleep = 7; }
                                 }
-                                if (displayData.sleepScore) {
-                                    readiness += (displayData.sleepScore - 50) * 0.15;
+
+                                // RHR Points (vs Recovery Baseline)
+                                if (displayData.restingHR && rhrBaselineRec) {
+                                    const rhrDev = displayData.restingHR - rhrBaselineRec;
+                                    if (rhrDev <= 1) { readiness += 35; debugPoints.rhr = 35; }
+                                    else if (rhrDev <= 2) { readiness += 25; debugPoints.rhr = 25; }
+                                    else if (rhrDev <= 3) { readiness += 15; debugPoints.rhr = 15; }
                                 }
+
+                                // HRV Points (Z-Score vs Historic)
+                                if (avgHRV && hrvMeanHist && hrvStdHist > 0) {
+                                    // avgHRV is rolling mean of 7 days including today
+                                    const zScore = (avgHRV - hrvMeanHist) / hrvStdHist;
+                                    if (zScore >= 0.5) { readiness += 50; debugPoints.hrv = 50; }
+                                    else if (zScore >= -0.5) { readiness += 35; debugPoints.hrv = 35; }
+                                    else if (zScore >= -1.0) { readiness += 20; debugPoints.hrv = 20; }
+                                }
+
                                 readiness = Math.max(0, Math.min(100, readiness));
 
                                 // Colors
@@ -631,21 +689,6 @@ const HistoryView = ({ logs, onExport, onImport, user, onSaveFood, myFoods }) =>
                                 };
                                 const ierColor = getColor(ier);
                                 const readinessColor = getColor(readiness);
-
-                                // DEBUG LOGS FOR USER
-                                console.log('🧮 IER CALCULATION (v4.1 - Excl. Today):');
-                                console.log('  - HRV Score (50%):', hrvScore.toFixed(2), '(Avg7:', avgHRV.toFixed(1), 'Avg21:', avgHRV21.toFixed(1), ')');
-                                console.log('  - RHR Score (15%):', rhrScore.toFixed(2), '(Today:', displayData.restingHR, 'Avg21:', avgRHR21.toFixed(1), ')');
-                                console.log('  - Sleep Score (20%):', sleepScore.toFixed(2), '(Avg7:', avgSleep7.toFixed(1), 'Avg21:', avgSleep21.toFixed(1), ')');
-                                console.log('  - TSB Score (15%):', tsbScore.toFixed(2), '(TSB:', tsb, ')');
-                                console.log('  = FINAL IER:', ier.toFixed(2));
-
-                                console.log('🚦 READINESS CALCULATION (v4.1):');
-                                console.log('  - Base: 50');
-                                console.log('  - HRV Delta * 0.6:', avgHRV ? (((displayData.hrv - avgHRV) / avgHRV * 100) * 0.6).toFixed(2) : 'No Avg');
-                                console.log('  - RHR Delta * 0.25:', avgRHR21 ? (((avgRHR21 - displayData.restingHR) / avgRHR21 * 100) * 0.25).toFixed(2) : 'No Avg');
-                                console.log('  - Sleep Delta * 0.15:', displayData.sleepScore ? ((displayData.sleepScore - 50) * 0.15).toFixed(2) : 'No Score');
-                                console.log('  = FINAL READINESS:', readiness.toFixed(2));
 
                                 return (
                                     <div className="bg-gradient-to-br from-indigo-900 to-slate-900 p-6 rounded-3xl text-white shadow-xl relative overflow-hidden">
@@ -740,6 +783,14 @@ const HistoryView = ({ logs, onExport, onImport, user, onSaveFood, myFoods }) =>
                                 const bands = calculateNormalityBands(last60Days);
                                 const today = intervalsData.find(d => d.id === todayISO);
 
+                                // Calculate MA7 (7-day moving average INCLUDING today) - matching Streamlit
+                                const last7DaysIncludingToday = intervalsData.slice(displayIdx, displayIdx + 7);
+                                const hrvValues7d = last7DaysIncludingToday.filter(d => d.hrv).map(d => d.hrv);
+                                const rhrValues7d = last7DaysIncludingToday.filter(d => d.restingHR).map(d => d.restingHR);
+
+                                const hrv_ma7 = hrvValues7d.length > 0 ? hrvValues7d.reduce((sum, v) => sum + v, 0) / hrvValues7d.length : null;
+                                const rhr_ma7 = rhrValues7d.length > 0 ? rhrValues7d.reduce((sum, v) => sum + v, 0) / rhrValues7d.length : null;
+
                                 // Check if we have enough data
                                 if (!bands.hrv_mean && !bands.rhr_mean) {
                                     return (
@@ -755,22 +806,20 @@ const HistoryView = ({ logs, onExport, onImport, user, onSaveFood, myFoods }) =>
                                 }
 
                                 // Helper to render a band bar
-                                const renderBand = (label, value, mean, lower, upper, unit, isLowerAlarm) => {
+                                const renderBand = (label, ma7Value, todayValue, mean, lower, upper, unit, isLowerAlarm) => {
                                     if (mean === null || lower === null || upper === null) return null;
 
-                                    // Determine if value is outside bands
+                                    // Determine if MA7 is outside bands
                                     const isOutside = isLowerAlarm
-                                        ? (value && value < lower)
-                                        : (value && value > upper);
+                                        ? (ma7Value && ma7Value < lower)
+                                        : (ma7Value && ma7Value > upper);
 
                                     const valueColor = isOutside ? 'text-rose-400' : 'text-emerald-400';
-                                    const markerColor = isOutside ? 'bg-rose-500' : 'bg-white';
-                                    const bandBaseColor = 'bg-white/10';
-                                    const bandRangeColor = isOutside ? 'bg-rose-500/10' : 'bg-emerald-500/10';
-                                    const bandBorderColor = isOutside ? 'border-rose-500/30' : 'border-emerald-500/30';
+                                    const markerColor = isOutside ? 'bg-rose-500' : 'bg-emerald-400';
+                                    const bandRangeColor = isOutside ? 'bg-rose-500/20' : 'bg-emerald-500/20';
+                                    const bandBorderColor = isOutside ? 'border-rose-500/40' : 'border-emerald-500/40';
 
                                     // Calculate ranges for visualization
-                                    // Expand viewing range to include outliers: range ± 50%
                                     const bandWidth = upper - lower;
                                     const viewMin = lower - (bandWidth * 0.5);
                                     const viewMax = upper + (bandWidth * 0.5);
@@ -782,29 +831,42 @@ const HistoryView = ({ logs, onExport, onImport, user, onSaveFood, myFoods }) =>
                                     const posLower = getPos(lower);
                                     const posUpper = getPos(upper);
                                     const posMean = getPos(mean);
-                                    const posValue = value ? getPos(value) : 50;
+                                    const posMA7 = ma7Value ? getPos(ma7Value) : 50;
+                                    const posToday = todayValue ? getPos(todayValue) : null;
 
                                     return (
-                                        <div className="py-2">
-                                            {/* Header: Label and Value */}
-                                            <div className="flex justify-between items-end mb-2">
-                                                <p className="text-xs font-black text-indigo-200 uppercase tracking-widest">{label}</p>
-                                                <div className="flex items-baseline gap-1">
-                                                    <span className={`text-2xl font-black ${valueColor}`}>
-                                                        {value ? value.toFixed(1) : '-'}
-                                                    </span>
-                                                    <span className="text-[10px] font-bold text-white/40 uppercase">{unit}</span>
+                                        <div className="py-4">
+                                            {/* Header: Label and Values */}
+                                            <div className="flex justify-between items-center mb-4">
+                                                <p className="text-sm font-black text-indigo-300 uppercase tracking-wider">{label}</p>
+                                                <div className="flex flex-col items-end gap-1">
+                                                    <div className="flex items-baseline gap-2">
+                                                        <span className="text-xs text-white/40">MA7:</span>
+                                                        <span className={`text-4xl font-black ${valueColor}`}>
+                                                            {ma7Value ? ma7Value.toFixed(0) : '-'}
+                                                        </span>
+                                                        <span className="text-xs font-bold text-white/50 uppercase">{unit}</span>
+                                                    </div>
+                                                    {todayValue && (
+                                                        <div className="flex items-baseline gap-2">
+                                                            <span className="text-xs text-white/40">Hoy:</span>
+                                                            <span className="text-xl font-bold text-white/60">
+                                                                {todayValue.toFixed(0)}
+                                                            </span>
+                                                            <span className="text-xs font-bold text-white/40 uppercase">{unit}</span>
+                                                        </div>
+                                                    )}
                                                 </div>
                                             </div>
 
-                                            {/* Band Visualization Container */}
-                                            <div className="relative h-10 w-full mt-1">
+                                            {/* Band Visualization Container - INCREASED HEIGHT */}
+                                            <div className="relative h-16 w-full mt-2">
                                                 {/* Full Track */}
-                                                <div className="absolute top-1/2 -translate-y-1/2 left-0 w-full h-1.5 bg-white/5 rounded-full" />
+                                                <div className="absolute top-1/2 -translate-y-1/2 left-0 w-full h-2 bg-white/10 rounded-full" />
 
                                                 {/* Normal Range Band */}
                                                 <div
-                                                    className={`absolute top-1/2 -translate-y-1/2 h-3 rounded-full ${bandRangeColor} border ${bandBorderColor}`}
+                                                    className={`absolute top-1/2 -translate-y-1/2 h-4 rounded-full ${bandRangeColor} border-2 ${bandBorderColor}`}
                                                     style={{
                                                         left: `${posLower}%`,
                                                         width: `${posUpper - posLower}%`
@@ -813,11 +875,11 @@ const HistoryView = ({ logs, onExport, onImport, user, onSaveFood, myFoods }) =>
 
                                                 {/* Mean Marker */}
                                                 <div
-                                                    className="absolute top-1/2 -translate-y-1/2 w-0.5 h-4 bg-white/20"
+                                                    className="absolute top-1/2 -translate-y-1/2 w-0.5 h-6 bg-white/30"
                                                     style={{ left: `${posMean}%` }}
                                                 />
                                                 <span
-                                                    className="absolute top-6 -translate-x-1/2 text-[9px] font-bold text-white/30"
+                                                    className="absolute top-10 -translate-x-1/2 text-xs font-bold text-white/40"
                                                     style={{ left: `${posMean}%` }}
                                                 >
                                                     μ
@@ -825,24 +887,48 @@ const HistoryView = ({ logs, onExport, onImport, user, onSaveFood, myFoods }) =>
 
                                                 {/* Limits Labels */}
                                                 <span
-                                                    className="absolute -top-3 -translate-x-1/2 text-[9px] font-bold text-emerald-500/50"
+                                                    className="absolute -top-5 -translate-x-1/2 text-xs font-bold text-emerald-400/60"
                                                     style={{ left: `${posLower}%` }}
                                                 >
-                                                    {lower.toFixed(1)}
+                                                    {lower.toFixed(0)}
                                                 </span>
                                                 <span
-                                                    className="absolute -top-3 -translate-x-1/2 text-[9px] font-bold text-emerald-500/50"
+                                                    className="absolute -top-5 -translate-x-1/2 text-xs font-bold text-emerald-400/60"
                                                     style={{ left: `${posUpper}%` }}
                                                 >
-                                                    {upper.toFixed(1)}
+                                                    {upper.toFixed(0)}
                                                 </span>
 
-                                                {/* Current Value Marker (Diamond) */}
-                                                {value && (
-                                                    <div
-                                                        className={`absolute top-1/2 -translate-y-1/2 w-3 h-3 rotate-45 ${markerColor} shadow-lg ring-2 ring-black transform -translate-x-1/2 z-10`}
-                                                        style={{ left: `${posValue}%` }}
-                                                    />
+                                                {/* MA7 Value Marker (Diamond) */}
+                                                {ma7Value && (
+                                                    <>
+                                                        <div
+                                                            className={`absolute top-1/2 -translate-y-1/2 w-4 h-4 rotate-45 ${markerColor} shadow-lg ring-2 ring-black/50 transform -translate-x-1/2 z-10`}
+                                                            style={{ left: `${posMA7}%` }}
+                                                        />
+                                                        <span
+                                                            className="absolute -bottom-5 -translate-x-1/2 text-xs font-bold text-white/50"
+                                                            style={{ left: `${posMA7}%` }}
+                                                        >
+                                                            MA7
+                                                        </span>
+                                                    </>
+                                                )}
+
+                                                {/* Today's Value Marker (Circle) */}
+                                                {posToday && (
+                                                    <>
+                                                        <div
+                                                            className="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-white/80 shadow-md ring-2 ring-indigo-400/60 transform -translate-x-1/2 z-10"
+                                                            style={{ left: `${posToday}%` }}
+                                                        />
+                                                        <span
+                                                            className="absolute -bottom-5 -translate-x-1/2 text-xs font-bold text-indigo-300/70"
+                                                            style={{ left: `${posToday}%` }}
+                                                        >
+                                                            Hoy
+                                                        </span>
+                                                    </>
                                                 )}
                                             </div>
                                         </div>
@@ -850,14 +936,15 @@ const HistoryView = ({ logs, onExport, onImport, user, onSaveFood, myFoods }) =>
                                 };
 
                                 return (
-                                    <div className="bg-gradient-to-br from-slate-900 via-indigo-950/30 to-slate-900 p-6 rounded-3xl border border-white/5 shadow-xl space-y-6">
-                                        <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest text-center border-b border-white/5 pb-4">
-                                            📊 Bandas de Normalidad (60 días)
+                                    <div className="bg-gradient-to-br from-slate-900 via-indigo-950/40 to-slate-900 p-6 rounded-3xl border border-white/10 shadow-2xl space-y-4">
+                                        <p className="text-sm font-black text-indigo-300 uppercase tracking-wider text-center border-b border-white/10 pb-4">
+                                            📊 Bandas de Normalidad
                                         </p>
 
-                                        {/* RHR Band (First) */}
+                                        {/* RHR Band (First) - Using MA7 + Today */}
                                         {bands.rhr_mean && renderBand(
                                             'FC Reposo',
+                                            rhr_ma7,
                                             today?.restingHR,
                                             bands.rhr_mean,
                                             bands.rhr_lower,
@@ -867,11 +954,12 @@ const HistoryView = ({ logs, onExport, onImport, user, onSaveFood, myFoods }) =>
                                         )}
 
                                         {/* Separator */}
-                                        <div className="h-px bg-white/5 w-full" />
+                                        <div className="h-px bg-white/10 w-full" />
 
-                                        {/* HRV Band (Second) */}
+                                        {/* HRV Band (Second) - Using MA7 + Today */}
                                         {bands.hrv_mean && renderBand(
                                             'VFC (HRV)',
+                                            hrv_ma7,
                                             today?.hrv,
                                             bands.hrv_mean,
                                             bands.hrv_lower,

@@ -260,16 +260,48 @@ const EntryView = ({ today, loading, searchFoods, addLog, query, setQuery, searc
                             </div>
                             <div>
                                 <p className="text-[10px] font-black uppercase text-secondary tracking-widest">Registrando para</p>
-                                <p className="font-bold text-sm">{isToday ? "Hoy" : new Date(entryDate).toLocaleDateString()}</p>
+                                <p className="font-bold text-sm">{isToday ? "Hoy" : (() => {
+                                    const d = new Date(entryDate + 'T00:00:00');
+                                    const day = String(d.getDate()).padStart(2, '0');
+                                    const month = String(d.getMonth() + 1).padStart(2, '0');
+                                    const year = d.getFullYear();
+                                    return `${day}/${month}/${year}`;
+                                })()}</p>
                             </div>
                         </div>
-                        <input
-                            type="date"
-                            value={entryDate}
-                            max={new Date().toISOString().slice(0, 10)}
-                            onChange={(e) => setEntryDate(e.target.value)}
-                            className="bg-transparent border border-theme rounded-xl p-2 text-sm font-bold outline-none focus:ring-2 ring-indigo-500/20"
-                        />
+                        <div className="flex items-center gap-2">
+                            <button
+                                onClick={() => {
+                                    const d = new Date(entryDate + 'T00:00:00');
+                                    d.setDate(d.getDate() - 1);
+                                    setEntryDate(d.toISOString().slice(0, 10));
+                                }}
+                                className="p-2 bg-slate-100 dark:bg-slate-800 rounded-full text-secondary hover:text-primary transition-colors active:scale-95"
+                            >
+                                <Icons.ChevronLeft size={18} />
+                            </button>
+                            <button
+                                onClick={() => setEntryDate(new Date().toISOString().slice(0, 10))}
+                                disabled={isToday}
+                                className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all ${isToday ? 'bg-slate-100 dark:bg-slate-800 text-secondary opacity-50 cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-700 active:scale-95'}`}
+                            >
+                                Hoy
+                            </button>
+                            <button
+                                onClick={() => {
+                                    const d = new Date(entryDate + 'T00:00:00');
+                                    d.setDate(d.getDate() + 1);
+                                    const today = new Date().toISOString().slice(0, 10);
+                                    if (d.toISOString().slice(0, 10) <= today) {
+                                        setEntryDate(d.toISOString().slice(0, 10));
+                                    }
+                                }}
+                                disabled={isToday}
+                                className={`p-2 rounded-full transition-colors active:scale-95 ${isToday ? 'bg-slate-100 dark:bg-slate-800 text-secondary opacity-50 cursor-not-allowed' : 'bg-slate-100 dark:bg-slate-800 text-secondary hover:text-primary'}`}
+                            >
+                                <Icons.ChevronRight size={18} />
+                            </button>
+                        </div>
                     </div>
 
                     {firebaseError && (
