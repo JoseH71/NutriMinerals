@@ -1,0 +1,14 @@
+{
+  "projects": {
+    "default": "nutri-minerals"
+  },
+  "targets": {
+    "nutri-minerals": {
+      "hosting": {
+        "app": [
+          "nutri-minerals"
+        ]
+      }
+    }
+  }
+}
