@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Icons } from './Icons';
-import { searchLocalDB, FOOD_DATABASE } from '../utils/foodDatabase';
+import { searchLocalDB, FOOD_DATABASE, addCustomFood } from '../utils/foodDatabase';
 import { saveDailyEntry } from '../utils/helpers';
 
 export const EntryView = () => {
@@ -8,6 +8,10 @@ export const EntryView = () => {
     const [selectedFood, setSelectedFood] = useState(null);
     const [quantity, setQuantity] = useState(1);
     const [showSuccess, setShowSuccess] = useState(false);
+    const [isCreating, setIsCreating] = useState(false);
+    const [newFood, setNewFood] = useState({
+        name: '', portion: '100g', calories: '', protein: '', carbs: '', fat: '', fiber: '', na: '', k: '', ca: '', mg: ''
+    });
 
     const handleSearch = (value) => {
         setSearch(value);
@@ -39,6 +43,30 @@ export const EntryView = () => {
             }, 2000);
         } catch (error) {
             console.error('Error saving entry:', error);
+        }
+    };
+
+    const handleSaveCustom = () => {
+        if (!newFood.name || !newFood.calories) return;
+
+        const foodData = {
+            portion: newFood.portion,
+            calories: Number(newFood.calories),
+            protein: Number(newFood.protein),
+            carbs: Number(newFood.carbs),
+            fat: Number(newFood.fat),
+            fiber: Number(newFood.fiber),
+            na: Number(newFood.na),
+            k: Number(newFood.k),
+            ca: Number(newFood.ca),
+            mg: Number(newFood.mg)
+        };
+
+        if (addCustomFood(newFood.name, foodData)) {
+            setIsCreating(false);
+            handleSearch(newFood.name); // Auto-select the new food
+            // Optional: reset form or keep it? Resetting is better.
+            setNewFood({ name: '', portion: '100g', calories: '', protein: '', carbs: '', fat: '', fiber: '', na: '', k: '', ca: '', mg: '' });
         }
     };
 
@@ -76,6 +104,110 @@ export const EntryView = () => {
                     />
                 </div>
             </div>
+
+            {/* Creation Mode */}
+            {isCreating ? (
+                <div className="bg-card border border-theme rounded-xl p-4 mb-6 animation-fade-in">
+                    <h3 className="text-lg font-bold mb-4 text-primary">Crear Nuevo Alimento</h3>
+
+                    <div className="space-y-4">
+                        <div>
+                            <label className="text-xs text-secondary mb-1 block">Nombre del Alimento</label>
+                            <input
+                                type="text"
+                                value={newFood.name}
+                                onChange={(e) => setNewFood({ ...newFood, name: e.target.value })}
+                                className="w-full p-2 rounded-lg border border-theme bg-app text-primary"
+                                placeholder="Ej: Mi Batido Especial"
+                            />
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-4">
+                            <div>
+                                <label className="text-xs text-secondary mb-1 block">Porción Base</label>
+                                <input
+                                    type="text"
+                                    value={newFood.portion}
+                                    onChange={(e) => setNewFood({ ...newFood, portion: e.target.value })}
+                                    className="w-full p-2 rounded-lg border border-theme bg-app text-primary"
+                                    placeholder="Ej: 100g"
+                                />
+                            </div>
+                            <div>
+                                <label className="text-xs text-secondary mb-1 block">Calorías</label>
+                                <input
+                                    type="number"
+                                    value={newFood.calories}
+                                    onChange={(e) => setNewFood({ ...newFood, calories: e.target.value })}
+                                    className="w-full p-2 rounded-lg border border-theme bg-app text-primary"
+                                />
+                            </div>
+                        </div>
+
+                        {/* Macros */}
+                        <div className="grid grid-cols-4 gap-2">
+                            {['protein', 'carbs', 'fat', 'fiber'].map(macro => (
+                                <div key={macro}>
+                                    <label className="text-xs text-secondary mb-1 block capitalize">{macro}</label>
+                                    <input
+                                        type="number"
+                                        value={newFood[macro]}
+                                        onChange={(e) => setNewFood({ ...newFood, [macro]: e.target.value })}
+                                        className="w-full p-2 rounded-lg border border-theme bg-app text-primary text-center"
+                                    />
+                                </div>
+                            ))}
+                        </div>
+
+                        {/* Micros */}
+                        <div className="grid grid-cols-4 gap-2">
+                            {['na', 'k', 'ca', 'mg'].map(micro => (
+                                <div key={micro}>
+                                    <label className="text-xs text-secondary mb-1 block capitalize">{micro}</label>
+                                    <input
+                                        type="number"
+                                        value={newFood[micro]}
+                                        onChange={(e) => setNewFood({ ...newFood, [micro]: e.target.value })}
+                                        className="w-full p-2 rounded-lg border border-theme bg-app text-primary text-center text-xs"
+                                        placeholder="mg"
+                                    />
+                                </div>
+                            ))}
+                        </div>
+
+                        <div className="flex gap-2 pt-2">
+                            <button
+                                onClick={() => setIsCreating(false)}
+                                className="flex-1 py-3 bg-slate-200 dark:bg-slate-700 text-primary font-bold rounded-xl"
+                            >
+                                Cancelar
+                            </button>
+                            <button
+                                onClick={handleSaveCustom}
+                                className="flex-1 py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700"
+                            >
+                                Añadir a Catálogo
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            ) : (
+                /* Toggle Create Button (only if not viewing a food) */
+                !selectedFood && (
+                    <button
+                        onClick={() => {
+                            setIsCreating(true);
+                            // Pre-fill name with search query if available
+                            if (search) {
+                                setNewFood(prev => ({ ...prev, name: search }));
+                            }
+                        }}
+                        className="w-full mb-6 py-3 border-2 border-dashed border-indigo-300 dark:border-indigo-700 text-indigo-600 dark:text-indigo-400 font-bold rounded-xl hover:bg-indigo-50 dark:hover:bg-indigo-900/10 transition-colors flex items-center justify-center gap-2"
+                    >
+                        <span className="text-xl">+</span> Crear Alimento Personalizado
+                    </button>
+                )
+            )}
 
             {/* Food Result */}
             {selectedFood && (
@@ -147,6 +279,22 @@ export const EntryView = () => {
                         className="w-full py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 transition-colors"
                     >
                         Guardar Entrada
+                    </button>
+
+                    <button
+                        onClick={() => {
+                            setNewFood({
+                                name: `${selectedFood.name} (Copia)`,
+                                portion: quantity === 1 ? selectedFood.portion : 'Personalizado',
+                                ...nutrients
+                            });
+                            setSelectedFood(null);
+                            setIsCreating(true);
+                            window.scrollTo({ top: 0, behavior: 'smooth' });
+                        }}
+                        className="w-full mt-3 py-3 border border-indigo-200 dark:border-indigo-800 text-indigo-600 dark:text-indigo-400 font-bold rounded-xl hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-colors"
+                    >
+                        Guardar en Catálogo
                     </button>
                 </div>
             )}

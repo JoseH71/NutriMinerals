@@ -1,89 +1,72 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import * as Icons from 'lucide-react';
+import MyFoodsView from '../Common/MyFoodsView';
 
-// Helper to get unique sorted suggestions
-const getSuggestions = (today, myFoods = [], allLogs = []) => {
+// Helper to get unique sorted suggestions from history and today
+const getSuggestions = (today = [], myFoods = [], allLogs = []) => {
     const uniqueNames = new Set();
-
-    // 1. Add "My Foods" (Favorites) - Highest priority
+    // 1. Add logs from today first
+    (today || []).forEach(l => l.name && uniqueNames.add(l.name.trim()));
+    // 2. Add "My Foods" (Favorites)
     (myFoods || []).forEach(f => f.name && uniqueNames.add(f.name.trim()));
-
-    // 2. Add History (All Logs) - Recent first usually better, but Set insertion order matters less for sorting
+    // 3. Add History
     (allLogs || []).forEach(l => l.name && uniqueNames.add(l.name.trim()));
-
     return Array.from(uniqueNames).sort();
 };
 
-const EntryView = ({ today, loading, searchFoods, addLog, query, setQuery, searchResults, firebaseError, deleteLog, entryDate, setEntryDate, myFoods, allLogs }) => {
+const EntryView = ({ today, loading, searchFoods, addLog, query, setQuery, searchResults, firebaseError, deleteLog, entryDate, setEntryDate, myFoods, allLogs, onSaveFood, foodToEdit, onClearFoodToEdit, onDeleteFood }) => {
     // State for the Edit/Confirmation Modal
     const [selectedFood, setSelectedFood] = useState(null);
+    const [showCatalog, setShowCatalog] = useState(false);
     const [form, setForm] = useState({ name: '', calories: '', protein: '', carbs: '', fat: '', na: '', k: '', ca: '', mg: '', extraMinerals: [] });
     const [timeBlock, setTimeBlock] = useState('mañana');
-    const [saltLevel, setSaltLevel] = useState('none'); // 'none', 'low', 'normal', 'high'
-    const [baseNa, setBaseNa] = useState(0); // Store original Na to add salt on top
+    const [saltLevel, setSaltLevel] = useState('none');
+    const [baseNa, setBaseNa] = useState(0);
     const [quantity, setQuantity] = useState(1);
-    const [baseValues, setBaseValues] = useState(null); // Store original values for multiplier
+    const [baseValues, setBaseValues] = useState(null);
 
     const suggestions = useMemo(() => getSuggestions(today, myFoods, allLogs), [today, myFoods, allLogs]);
-
     const isToday = entryDate === new Date().toISOString().slice(0, 10);
 
     // Auto-set timeblock based on hour
     useEffect(() => {
         const hour = new Date().getHours();
         if (hour < 14) setTimeBlock('mañana');
-        else if (hour < 20) setTimeBlock('tarde');
+        else if (hour < 21) setTimeBlock('tarde');
         else setTimeBlock('noche');
     }, []);
 
+    // Effect to handle external edit requests (e.g. from Catalog)
+    useEffect(() => {
+        if (foodToEdit) {
+            handleSelectFood(foodToEdit);
+            onClearFoodToEdit();
+        }
+    }, [foodToEdit, onClearFoodToEdit]);
+
     const handleSelectFood = (food) => {
-        // Prepare form data
         const initialNa = food.na || 0;
         setForm({ ...food });
-        setBaseValues({ ...food }); // Save for multiplication
+        setBaseValues({ ...food });
         setBaseNa(initialNa);
         setSaltLevel('none');
         setQuantity(1);
         setSelectedFood(food);
-
-        // Smart salt default?
-        // app.html logic: restaurants->high, processed->none, others->normal
-        // But user asked for buttons. Let's start at 'none' or 'normal' as per legacy logic if mapped.
-        // Legacy logic:
-        const lowerName = food.name.toLowerCase();
-        const isProcessed = /burger|pizza|jamón|queso|pan|salsa|lata|bote/.test(lowerName);
-        const isRestaurant = /restaurante|bar|tapa|ración/.test(lowerName);
-
-        if (isRestaurant) {
-            setSaltLevel('high');
-            setForm(f => ({ ...f, na: initialNa + 900 }));
-        } else if (isProcessed) {
-            setSaltLevel('none');
-            // no change to Na
-        } else {
-            setSaltLevel('normal'); // Home cooking default
-            setForm(f => ({ ...f, na: initialNa + 500 }));
-        }
     };
 
     const updateQuantity = (newQty) => {
         if (!baseValues || newQty < 0.25) return;
         setQuantity(newQty);
-
-        // Scale macros
         const safeVal = (v) => Math.round((v || 0) * newQty);
-        // Special logic for Salt: Scale base NA, then re-add current salt level
         const scaledBaseNa = Math.round((baseValues.na || 0) * newQty);
         setBaseNa(scaledBaseNa);
-
         const saltAdd = saltLevel === 'none' ? 0 : saltLevel === 'low' ? 200 : saltLevel === 'normal' ? 500 : 900;
-
         setForm(prev => ({
             ...prev,
             calories: safeVal(baseValues.calories),
             protein: safeVal(baseValues.protein),
             carbs: safeVal(baseValues.carbs),
-            fat: Math.round((baseValues.fat || 0) * newQty * 10) / 10, // keep 1 decimal for fat
+            fat: Math.round((baseValues.fat || 0) * newQty * 10) / 10,
             k: safeVal(baseValues.k),
             ca: safeVal(baseValues.ca),
             mg: safeVal(baseValues.mg),
@@ -100,15 +83,14 @@ const EntryView = ({ today, loading, searchFoods, addLog, query, setQuery, searc
     const clearAll = () => {
         setSelectedFood(null);
         setQuery('');
-        searchFoods(''); // Clears results in App.jsx
+        searchFoods('');
     };
 
     const handleSave = (e) => {
         e.preventDefault();
         addLog({
             ...form,
-            timeBlock, // User selected time block
-            // ensure numbers
+            timeBlock,
             calories: Number(form.calories),
             protein: Number(form.protein),
             carbs: Number(form.carbs),
@@ -119,23 +101,39 @@ const EntryView = ({ today, loading, searchFoods, addLog, query, setQuery, searc
             mg: Number(form.mg),
             portion: quantity !== 1 && baseValues ? `${quantity} x ${baseValues.portion || 'ración'}` : (form.portion || '1 ración')
         });
-        // Reset
         clearAll();
     };
 
-    // Main Render
+    if (showCatalog) {
+        return (
+            <div className="pb-20">
+                <MyFoodsView
+                    myFoods={myFoods}
+                    onSave={onSaveFood}
+                    onDelete={onDeleteFood}
+                    onClose={() => setShowCatalog(false)}
+                    onAddToLog={(food) => {
+                        handleSelectFood(food);
+                        setShowCatalog(false);
+                    }}
+                />
+            </div>
+        );
+    }
+
     return (
         <div className="p-4 space-y-6 animate-fade-in pb-20">
-            {/* Modal / Edit Form Overlay */}
             {selectedFood ? (
-                <div className="bg-card p-6 rounded-[2rem] border border-theme animate-fade-in shadow-2xl relative">
+                /* EDIT FORM MODAL */
+                <div className="bg-card p-6 rounded-[2.5rem] border border-theme animate-fade-in shadow-2xl relative">
                     <div className="flex justify-between items-center mb-6">
-                        <h2 className="font-black text-xl text-primary">Editar</h2>
-                        <button onClick={clearAll} className="p-2 bg-slate-100 dark:bg-slate-800 rounded-full text-secondary hover:text-rose-500 transition-colors"><Icons.X /></button>
+                        <h2 className="font-black text-xl text-primary">Detalle del Registro</h2>
+                        <button onClick={clearAll} className="p-2 bg-slate-100 dark:bg-slate-800 rounded-full text-secondary hover:text-rose-500 transition-colors">
+                            <Icons.X />
+                        </button>
                     </div>
 
                     <form onSubmit={handleSave} className="space-y-6">
-                        {/* Name Input */}
                         <div className="flex gap-4">
                             <div className="relative flex-1">
                                 <input
@@ -149,348 +147,226 @@ const EntryView = ({ today, loading, searchFoods, addLog, query, setQuery, searc
                             </div>
                         </div>
 
-                        {/* Quantity Multiplier */}
                         {baseValues && (
-                            <div className="bg-indigo-50 dark:bg-indigo-900/20 p-3 rounded-xl border border-indigo-200 dark:border-indigo-800">
-                                <label className="text-[10px] font-black text-indigo-600 dark:text-indigo-400 uppercase tracking-wider">Cantidad</label>
-                                <div className="flex items-center gap-2 mt-1">
-                                    <button type="button" onClick={() => updateQuantity(quantity - 0.25)} className="w-8 h-8 bg-indigo-600 text-white rounded-lg font-black text-xl active:scale-95 transition-all">−</button>
-                                    <input
-                                        type="number"
-                                        step="0.25"
-                                        min="0.25"
-                                        value={quantity}
-                                        onChange={(e) => updateQuantity(parseFloat(e.target.value) || 1)}
-                                        className="flex-1 text-center text-xl font-black text-indigo-900 dark:text-indigo-100 bg-white dark:bg-slate-800 rounded-lg py-1.5 outline-none border border-indigo-300 dark:border-indigo-700 focus:border-indigo-500"
-                                    />
-                                    <button type="button" onClick={() => updateQuantity(quantity + 0.25)} className="w-8 h-8 bg-indigo-600 text-white rounded-lg font-black text-xl active:scale-95 transition-all">+</button>
+                            <div className="bg-indigo-50 dark:bg-indigo-900/20 p-4 rounded-2xl border border-indigo-200 dark:border-indigo-800">
+                                <label className="text-[10px] font-black text-indigo-600 dark:text-indigo-400 uppercase tracking-widest mb-2 block">Ajustar Cantidad</label>
+                                <div className="flex items-center gap-4">
+                                    <button type="button" onClick={() => updateQuantity(quantity - 0.25)} className="w-12 h-12 bg-white dark:bg-indigo-900 shadow-sm border border-indigo-200 dark:border-indigo-700 rounded-xl font-black text-2xl flex items-center justify-center transition-all active:scale-90 text-indigo-600">−</button>
+                                    <div className="flex-1 text-center">
+                                        <p className="text-3xl font-black text-indigo-950 dark:text-indigo-50">{quantity}x</p>
+                                        <p className="text-[9px] font-bold text-indigo-400 uppercase">Ración base</p>
+                                    </div>
+                                    <button type="button" onClick={() => updateQuantity(quantity + 0.25)} className="w-12 h-12 bg-white dark:bg-indigo-900 shadow-sm border border-indigo-200 dark:border-indigo-700 rounded-xl font-black text-2xl flex items-center justify-center transition-all active:scale-90 text-indigo-600">+</button>
                                 </div>
-                                <p className="text-[8px] text-indigo-400 mt-1 text-center">Multiplicador de ración</p>
                             </div>
                         )}
 
-                        {/* TIME BLOCK SELECTOR (Legacy) */}
-                        <div className="flex bg-card-alt p-1 rounded-2xl border border-theme">
-                            <button type="button" onClick={() => setTimeBlock('mañana')} className={`flex-1 py-2 text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1 ${timeBlock === 'mañana' ? 'bg-amber-100 text-amber-700 shadow-sm' : 'text-secondary hover:bg-slate-200 dark:hover:bg-slate-800'}`}>🌅 Mañana</button>
-                            <button type="button" onClick={() => setTimeBlock('tarde')} className={`flex-1 py-2 text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1 ${timeBlock === 'tarde' ? 'bg-orange-100 text-orange-700 shadow-sm' : 'text-secondary hover:bg-slate-200 dark:hover:bg-slate-800'}`}>☀️ Tarde</button>
-                            <button type="button" onClick={() => setTimeBlock('noche')} className={`flex-1 py-2 text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1 ${timeBlock === 'noche' ? 'bg-indigo-100 text-indigo-700 shadow-sm' : 'text-secondary hover:bg-slate-200 dark:hover:bg-slate-800'}`}>🌙 Noche</button>
+                        <div className="flex bg-card-alt p-1.5 rounded-2xl border border-theme">
+                            {['mañana', 'tarde', 'noche'].map(block => (
+                                <button key={block} type="button" onClick={() => setTimeBlock(block)}
+                                    className={`flex-1 py-3 text-xs font-black rounded-xl transition-all capitalize ${timeBlock === block ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/30' : 'text-secondary font-bold'}`}>
+                                    {block === 'mañana' ? '🌅 Mañana' : block === 'tarde' ? '☀️ Tarde' : '🌙 Noche'}
+                                </button>
+                            ))}
                         </div>
 
-                        {/* Macros Row */}
                         <div className="grid grid-cols-4 gap-2">
-                            <div className="bg-orange-50 dark:bg-orange-900/20 p-3 rounded-2xl flex flex-col items-center">
-                                <label className="text-[10px] font-black text-orange-600 dark:text-orange-400 uppercase tracking-wider">Kcal</label>
-                                <input type="number" className="w-full text-center bg-transparent font-black text-lg text-orange-700 dark:text-orange-300 outline-none p-0" placeholder="0" value={form.calories} onChange={e => setForm({ ...form, calories: e.target.value })} />
+                            <div className="bg-orange-50 dark:bg-orange-900/20 p-3 rounded-2xl flex flex-col items-center border border-orange-100 dark:border-orange-800/30">
+                                <label className="text-[10px] font-black text-orange-600 uppercase">Kcal</label>
+                                <input type="number" className="w-full text-center bg-transparent font-black text-lg outline-none text-orange-700 dark:text-orange-300" value={form.calories} onChange={e => setForm({ ...form, calories: e.target.value })} />
                             </div>
-                            <div className="bg-slate-100 dark:bg-slate-800 p-3 rounded-2xl flex flex-col items-center border border-theme">
-                                <label className="text-[10px] font-black text-blue-600 dark:text-blue-400 uppercase tracking-wider">Prot</label>
-                                <input type="number" className="w-full text-center bg-transparent font-black text-lg text-blue-700 dark:text-blue-300 outline-none p-0" placeholder="0" value={form.protein} onChange={e => setForm({ ...form, protein: e.target.value })} />
+                            <div className="bg-blue-50 dark:bg-blue-900/20 p-3 rounded-2xl flex flex-col items-center border border-blue-100 dark:border-blue-800/30">
+                                <label className="text-[10px] font-black text-blue-600 uppercase">Prot</label>
+                                <input type="number" className="w-full text-center bg-transparent font-black text-lg outline-none text-blue-700 dark:text-blue-300" value={form.protein} onChange={e => setForm({ ...form, protein: e.target.value })} />
                             </div>
-                            <div className="bg-slate-100 dark:bg-slate-800 p-3 rounded-2xl flex flex-col items-center border border-theme">
-                                <label className="text-[10px] font-black text-amber-600 dark:text-amber-400 uppercase tracking-wider">Carb</label>
-                                <input type="number" className="w-full text-center bg-transparent font-black text-lg text-amber-700 dark:text-amber-300 outline-none p-0" placeholder="0" value={form.carbs} onChange={e => setForm({ ...form, carbs: e.target.value })} />
+                            <div className="bg-amber-50 dark:bg-amber-900/20 p-3 rounded-2xl flex flex-col items-center border border-amber-100 dark:border-amber-800/30">
+                                <label className="text-[10px] font-black text-amber-600 uppercase">Carb</label>
+                                <input type="number" className="w-full text-center bg-transparent font-black text-lg outline-none text-amber-700 dark:text-amber-300" value={form.carbs} onChange={e => setForm({ ...form, carbs: e.target.value })} />
                             </div>
-                            <div className="bg-slate-100 dark:bg-slate-800 p-3 rounded-2xl flex flex-col items-center border border-theme">
-                                <label className="text-[10px] font-black text-rose-600 dark:text-rose-400 uppercase tracking-wider">Grasa</label>
-                                <input type="number" className="w-full text-center bg-transparent font-black text-lg text-rose-700 dark:text-rose-300 outline-none p-0" placeholder="0" value={form.fat} onChange={e => setForm({ ...form, fat: e.target.value })} />
+                            <div className="bg-rose-50 dark:bg-rose-900/20 p-3 rounded-2xl flex flex-col items-center border border-rose-100 dark:border-rose-800/30">
+                                <label className="text-[10px] font-black text-rose-600 uppercase">Grasa</label>
+                                <input type="number" className="w-full text-center bg-transparent font-black text-lg outline-none text-rose-700 dark:text-rose-300" value={form.fat} onChange={e => setForm({ ...form, fat: e.target.value })} />
                             </div>
                         </div>
 
-                        {/* Minerals Block */}
                         <div className="grid grid-cols-2 gap-3">
-                            {/* Sodium Hero */}
-                            <div className="col-span-2 bg-blue-50 dark:bg-blue-900/20 p-4 rounded-3xl border border-blue-100 dark:border-blue-800/50 flex justify-between items-center">
+                            <div className="col-span-2 bg-slate-50 dark:bg-slate-800/50 p-4 rounded-3xl border border-theme flex justify-between items-center">
                                 <div>
-                                    <label className="text-[10px] font-black text-blue-600 dark:text-blue-400 uppercase tracking-widest flex items-center gap-1">
-                                        <span className="text-base">💧</span> Sodio Total (Na)
-                                    </label>
-                                    <p className="text-[9px] text-blue-400 pl-6">Base {Math.round(baseNa)} + Sal {saltLevel === 'none' ? 0 : saltLevel === 'low' ? 200 : saltLevel === 'normal' ? 500 : 900}</p>
+                                    <label className="text-[10px] font-black text-primary uppercase flex items-center gap-2">🧂 Sodio (Na) <span className="text-secondary opacity-50">mg</span></label>
+                                    <p className="text-[9px] text-secondary font-bold">Base {Math.round(baseNa)} + Sal {saltLevel === 'none' ? 0 : saltLevel === 'low' ? 200 : saltLevel === 'normal' ? 500 : 900}</p>
                                 </div>
-                                <div className="flex items-baseline gap-1">
-                                    <input type="number" className="w-20 text-right bg-transparent font-black text-3xl text-blue-600 dark:text-blue-400 outline-none p-0" placeholder="0" value={Math.round(form.na)} onChange={e => setForm({ ...form, na: Number(e.target.value) })} />
-                                    <span className="text-xs font-bold text-blue-400">mg</span>
-                                </div>
+                                <input type="number" className="w-24 text-right bg-transparent font-black text-3xl outline-none text-primary" value={Math.round(form.na)} onChange={e => setForm({ ...form, na: Number(e.target.value) })} />
                             </div>
-
-                            <div className="bg-card-alt p-3 rounded-2xl border border-theme flex flex-col justify-center">
-                                <label className="text-[10px] font-bold text-emerald-600 mb-1">Potasio (K)</label>
-                                <input type="number" className="w-full bg-transparent font-bold text-lg text-primary outline-none" placeholder="0" value={form.k} onChange={e => setForm({ ...form, k: e.target.value })} />
+                            <div className="bg-card-alt p-3 rounded-2xl border border-theme">
+                                <label className="text-[10px] font-bold text-emerald-600">Potasio (K)</label>
+                                <input type="number" className="w-full bg-transparent font-black text-lg outline-none" value={form.k} onChange={e => setForm({ ...form, k: e.target.value })} />
                             </div>
-                            <div className="bg-card-alt p-3 rounded-2xl border border-theme flex flex-col justify-center">
-                                <label className="text-[10px] font-bold text-rose-600 mb-1">Calcio (Ca)</label>
-                                <input type="number" className="w-full bg-transparent font-bold text-lg text-primary outline-none" placeholder="0" value={form.ca} onChange={e => setForm({ ...form, ca: e.target.value })} />
+                            <div className="bg-card-alt p-3 rounded-2xl border border-theme">
+                                <label className="text-[10px] font-bold text-rose-600">Calcio (Ca)</label>
+                                <input type="number" className="w-full bg-transparent font-black text-lg outline-none" value={form.ca} onChange={e => setForm({ ...form, ca: e.target.value })} />
                             </div>
-                            <div className="bg-card-alt p-3 rounded-2xl border border-theme flex flex-col justify-center col-span-2">
-                                <div className="flex justify-between items-center">
-                                    <label className="text-[10px] font-bold text-violet-600">Magnesio (Mg)</label>
-                                    <input type="number" className="w-20 text-right bg-transparent font-bold text-lg text-primary outline-none" placeholder="0" value={form.mg} onChange={e => setForm({ ...form, mg: e.target.value })} />
-                                </div>
+                            <div className="bg-card-alt p-3 rounded-2xl border border-theme col-span-2">
+                                <label className="text-[10px] font-bold text-violet-600">Magnesio (Mg)</label>
+                                <input type="number" className="w-full bg-transparent font-black text-lg outline-none" value={form.mg} onChange={e => setForm({ ...form, mg: e.target.value })} />
                             </div>
                         </div>
 
-                        {/* Salt Selector (Legacy) */}
                         <div className="space-y-3">
-                            <div className="flex justify-between items-end px-1">
-                                <div>
-                                    <h3 className="font-black text-sm text-primary flex items-center gap-2">🧂 Sal añadida <span className="text-[9px] bg-slate-100 dark:bg-slate-800 text-slate-500 px-2 py-0.5 rounded-full">+ Sodio</span></h3>
-                                </div>
-                            </div>
-
+                            <h3 className="font-black text-sm text-primary flex items-center gap-2">🧂 Añadir Sal Extra</h3>
                             <div className="grid grid-cols-4 gap-2">
-                                <button type="button" onClick={() => updateSalt('none')} className={`p-3 rounded-2xl flex flex-col items-center gap-1 transition-all ${saltLevel === 'none' ? 'bg-slate-800 text-white shadow-md transform scale-105' : 'bg-slate-100 dark:bg-slate-800/50 text-slate-400 hover:bg-slate-200'}`}><span className="text-xl">⬜</span><span className="text-[8px] font-bold uppercase">Nada</span></button>
-                                <button type="button" onClick={() => updateSalt('low')} className={`p-3 rounded-2xl flex flex-col items-center gap-1 transition-all ${saltLevel === 'low' ? 'bg-amber-100 text-amber-700 shadow-md transform scale-105 border-2 border-amber-400' : 'bg-slate-100 dark:bg-slate-800/50 text-slate-400 hover:bg-amber-50'}`}><span className="text-xl">🟡</span><span className="text-[8px] font-bold uppercase">Poca</span></button>
-                                <button type="button" onClick={() => updateSalt('normal')} className={`p-3 rounded-2xl flex flex-col items-center gap-1 transition-all ${saltLevel === 'normal' ? 'bg-emerald-100 text-emerald-700 shadow-md transform scale-105 border-2 border-emerald-500' : 'bg-slate-100 dark:bg-slate-800/50 text-slate-400 hover:bg-emerald-50'}`}><span className="text-xl">🟢</span><span className="text-[8px] font-bold uppercase">Normal</span></button>
-                                <button type="button" onClick={() => updateSalt('high')} className={`p-3 rounded-2xl flex flex-col items-center gap-1 transition-all ${saltLevel === 'high' ? 'bg-rose-100 text-rose-700 shadow-md transform scale-105 border-2 border-rose-500' : 'bg-slate-100 dark:bg-slate-800/50 text-slate-400 hover:bg-rose-50'}`}><span className="text-xl">🔴</span><span className="text-[8px] font-bold uppercase">Alta</span></button>
+                                {[
+                                    { id: 'none', icon: '⬜', label: 'Nada' },
+                                    { id: 'low', icon: '🟡', label: 'Poca' },
+                                    { id: 'normal', icon: '🟢', label: 'Normal' },
+                                    { id: 'high', icon: '🔴', label: 'Alta' }
+                                ].map(s => (
+                                    <button key={s.id} type="button" onClick={() => updateSalt(s.id)}
+                                        className={`p-3 rounded-2xl flex flex-col items-center transition-all ${saltLevel === s.id ? 'bg-indigo-600 text-white shadow-lg transform scale-105' : 'bg-slate-100 dark:bg-slate-800/50 text-slate-400'}`}>
+                                        <span className="text-xl mb-1">{s.icon}</span>
+                                        <span className="text-[8px] font-black uppercase tracking-widest">{s.label}</span>
+                                    </button>
+                                ))}
                             </div>
                         </div>
 
-                        <button type="submit" className="w-full bg-indigo-600 text-white py-4 rounded-2xl font-black shadow-xl active:scale-95 transition-all text-base flex items-center justify-center gap-2 hover:bg-indigo-700">
-                            Guardar Registro ✨
+                        <button type="submit" className="w-full bg-indigo-600 text-white py-5 rounded-[1.5rem] font-black shadow-xl shadow-indigo-500/30 active:scale-95 transition-all text-lg mb-2">
+                            Añadir al Diario ✨
                         </button>
+
+                        {onSaveFood && (
+                            <button type="button" onClick={() => onSaveFood({ ...form, portion: quantity !== 1 && baseValues ? `${quantity} x ${baseValues.portion || 'ración'}` : (form.portion || '1 ración') })}
+                                className="w-full py-4 border-2 border-dashed border-indigo-200 dark:border-indigo-800 text-indigo-500 font-black rounded-[1.5rem] flex items-center justify-center gap-2 hover:bg-indigo-50 dark:hover:bg-indigo-900/10 transition-colors">
+                                <Icons.Save size={20} /> Guardar como Favorito
+                            </button>
+                        )}
                     </form>
                 </div>
             ) : (
-                /* Standard Search View */
+                /* SEARCH VIEW */
                 <>
                     {/* Date Selector Header */}
-                    <div className="flex justify-between items-center bg-card p-3 rounded-2xl border border-theme shadow-sm mb-4">
-                        <div className="flex items-center gap-2">
-                            <div className={`p-2 rounded-xl ${isToday ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400' : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'}`}>
-                                <Icons.Calendar size={18} />
+                    <div className="flex justify-between items-center bg-card p-3 rounded-3xl border border-theme shadow-sm mb-4">
+                        <div className="flex items-center gap-3">
+                            <div className={`p-3 rounded-2xl ${isToday ? 'bg-indigo-100 text-indigo-700' : 'bg-amber-100 text-amber-700'}`}>
+                                <Icons.Calendar size={22} />
                             </div>
                             <div>
-                                <p className="text-[10px] font-black uppercase text-secondary tracking-widest">Registrando para</p>
-                                <p className="font-bold text-sm">{isToday ? "Hoy" : (() => {
-                                    const d = new Date(entryDate + 'T00:00:00');
-                                    const day = String(d.getDate()).padStart(2, '0');
-                                    const month = String(d.getMonth() + 1).padStart(2, '0');
-                                    const year = d.getFullYear();
-                                    return `${day}/${month}/${year}`;
-                                })()}</p>
+                                <p className="text-[10px] font-black uppercase text-secondary tracking-widest leading-none mb-1">Registro del día</p>
+                                <p className="font-black text-sm">{isToday ? "Hoy" : entryDate.split('-').reverse().join('/')}</p>
                             </div>
                         </div>
-                        <div className="flex items-center gap-2">
-                            <button
-                                onClick={() => {
-                                    const d = new Date(entryDate + 'T00:00:00');
-                                    d.setDate(d.getDate() - 1);
-                                    setEntryDate(d.toISOString().slice(0, 10));
-                                }}
-                                className="p-2 bg-slate-100 dark:bg-slate-800 rounded-full text-secondary hover:text-primary transition-colors active:scale-95"
-                            >
-                                <Icons.ChevronLeft size={18} />
-                            </button>
-                            <button
-                                onClick={() => setEntryDate(new Date().toISOString().slice(0, 10))}
-                                disabled={isToday}
-                                className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all ${isToday ? 'bg-slate-100 dark:bg-slate-800 text-secondary opacity-50 cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-700 active:scale-95'}`}
-                            >
-                                Hoy
-                            </button>
-                            <button
-                                onClick={() => {
-                                    const d = new Date(entryDate + 'T00:00:00');
-                                    d.setDate(d.getDate() + 1);
-                                    const today = new Date().toISOString().slice(0, 10);
-                                    if (d.toISOString().slice(0, 10) <= today) {
-                                        setEntryDate(d.toISOString().slice(0, 10));
-                                    }
-                                }}
-                                disabled={isToday}
-                                className={`p-2 rounded-full transition-colors active:scale-95 ${isToday ? 'bg-slate-100 dark:bg-slate-800 text-secondary opacity-50 cursor-not-allowed' : 'bg-slate-100 dark:bg-slate-800 text-secondary hover:text-primary'}`}
-                            >
-                                <Icons.ChevronRight size={18} />
-                            </button>
+                        <div className="flex items-center gap-1.5">
+                            <button onClick={() => {
+                                const d = new Date(entryDate + 'T00:00:00');
+                                d.setDate(d.getDate() - 1);
+                                setEntryDate(d.toISOString().slice(0, 10));
+                            }} className="p-2.5 bg-slate-100 dark:bg-slate-800 rounded-full text-secondary active:scale-90 transition-all"><Icons.ChevronLeft size={20} /></button>
+                            <button onClick={() => setEntryDate(new Date().toISOString().slice(0, 10))} className="px-4 py-2 bg-indigo-600 text-white rounded-full text-xs font-black uppercase tracking-widest transition-all active:scale-95 shadow-md shadow-indigo-500/20">Hoy</button>
+                            <button onClick={() => {
+                                const d = new Date(entryDate + 'T00:00:00');
+                                d.setDate(d.getDate() + 1);
+                                if (d <= new Date()) setEntryDate(d.toISOString().slice(0, 10));
+                            }} className="p-2.5 bg-slate-100 dark:bg-slate-800 rounded-full text-secondary active:scale-90 transition-all"><Icons.ChevronRight size={20} /></button>
                         </div>
                     </div>
 
-                    {firebaseError && (
-                        <div className="bg-amber-100 dark:bg-amber-900/30 border-2 border-amber-500/20 p-4 rounded-2xl flex items-center gap-3 text-amber-600 dark:text-amber-400 text-xs font-bold shadow-sm">
-                            <Icons.AlertTriangle size={20} />
-                            <span>⚠️ Conexión limitada: {firebaseError}</span>
-                        </div>
-                    )}
-
-                    {/* Search Bar */}
-                    <div className="space-y-4">
+                    <div className="space-y-6">
+                        {/* Search Bar */}
                         <div className="relative group">
-                            <div className="absolute inset-y-0 left-5 flex items-center pointer-events-none">
-                                <Icons.Search className="text-secondary opacity-40 group-focus-within:text-indigo-600 transition-colors" size={22} />
+                            <div className="absolute inset-y-0 left-6 flex items-center pointer-events-none">
+                                <Icons.Search className="text-secondary opacity-40 group-focus-within:text-indigo-600 transition-colors" size={24} />
                             </div>
                             <input
                                 type="text"
                                 value={query}
                                 onChange={(e) => setQuery(e.target.value)}
                                 onKeyDown={(e) => e.key === 'Enter' && searchFoods(query)}
-                                placeholder="¿Qué has comido hoy?"
-                                className="w-full p-5 pl-14 pr-14 rounded-[2rem] bg-card border border-theme text-lg font-bold shadow-sm focus:ring-4 focus:ring-indigo-500/10 outline-none transition-all placeholder:opacity-30"
+                                placeholder="¿Qué has comido?"
+                                className="w-full p-6 pl-16 pr-16 rounded-[2.5rem] bg-card border border-theme text-xl font-bold shadow-sm focus:ring-4 focus:ring-indigo-500/5 outline-none transition-all placeholder:text-slate-300"
                                 list="food-suggestions"
                             />
                             <datalist id="food-suggestions">
-                                {suggestions.map((name, i) => (
-                                    <option key={i} value={name} />
-                                ))}
+                                {suggestions.map((name, i) => <option key={i} value={name} />)}
                             </datalist>
-                            <button
-                                onClick={() => searchFoods(query)}
-                                className="absolute right-3 top-1/2 -translate-y-1/2 p-3 bg-indigo-600 text-white rounded-full shadow-lg shadow-indigo-500/30 active:scale-90 transition-all"
-                            >
-                                {loading ? <Icons.Loader2 className="animate-spin" size={20} /> : <Icons.ArrowRight size={20} />}
+                            <button onClick={() => searchFoods(query)} className="absolute right-3 top-1/2 -translate-y-1/2 p-4 bg-indigo-600 text-white rounded-full shadow-lg shadow-indigo-500/40 transform active:scale-90 transition-all">
+                                {loading ? <Icons.Loader2 className="animate-spin" size={24} /> : <Icons.ArrowRight size={24} />}
                             </button>
-                            {query && (
-                                <button
-                                    onClick={clearAll}
-                                    className="absolute right-16 top-1/2 -translate-y-1/2 p-2 text-secondary hover:text-rose-500 transition-colors"
-                                >
-                                    <Icons.X size={18} />
-                                </button>
-                            )}
                         </div>
 
-                        {/* Camera Button - Big and prominent */}
-                        <input
-                            type="file"
-                            accept="image/*"
-                            capture="environment"
-                            className="hidden"
-                            onChange={(e) => {
+                        {/* BIG Prominent Buttons */}
+                        <div className="flex flex-col gap-4">
+                            <input type="file" accept="image/*" capture="environment" className="hidden" id="camera-input" onChange={(e) => {
                                 const file = e.target.files?.[0];
                                 if (file) searchFoods('', file);
-                            }}
-                            id="camera-input"
-                        />
-                        <label
-                            htmlFor="camera-input"
-                            className="w-full p-4 bg-gradient-to-r from-indigo-500 to-purple-500 text-white rounded-2xl flex items-center justify-center gap-3 cursor-pointer hover:from-indigo-600 hover:to-purple-600 transition-all active:scale-[0.98] shadow-lg shadow-indigo-500/30"
-                        >
-                            <Icons.Camera size={28} />
-                            <span className="font-bold text-sm uppercase tracking-wider">Escanear Plato con Foto</span>
-                        </label>
+                            }} />
+                            <label htmlFor="camera-input"
+                                className="w-full p-6 bg-gradient-to-br from-indigo-600 via-indigo-700 to-purple-800 text-white rounded-[2rem] flex items-center justify-center gap-4 cursor-pointer shadow-xl shadow-indigo-500/20 active:scale-95 transition-all group">
+                                <div className="p-3 bg-white/10 rounded-2xl group-hover:scale-110 transition-transform">
+                                    <Icons.Camera size={36} />
+                                </div>
+                                <div className="text-left">
+                                    <span className="font-black text-lg block leading-tight">ESCANEAR PLATO</span>
+                                    <span className="text-[10px] font-bold text-indigo-200 uppercase tracking-widest">Reconocimiento por Foto</span>
+                                </div>
+                            </label>
+
+                            <button onClick={() => setShowCatalog(true)}
+                                className="w-full p-6 bg-gradient-to-br from-teal-600 via-teal-700 to-emerald-800 text-white rounded-[2rem] flex items-center justify-center gap-4 shadow-xl shadow-teal-500/20 active:scale-95 transition-all group">
+                                <div className="p-3 bg-white/10 rounded-2xl group-hover:scale-110 transition-transform">
+                                    <Icons.Wheat size={36} />
+                                </div>
+                                <div className="text-left">
+                                    <span className="font-black text-lg block leading-tight">MI CATÁLOGO</span>
+                                    <span className="text-[10px] font-bold text-teal-200 uppercase tracking-widest">Alimentos Verificados</span>
+                                </div>
+                            </button>
+                        </div>
                     </div>
 
                     {/* Search Results */}
                     {searchResults.length > 0 && (
-                        <div className="space-y-2 animate-slide-up">
-                            <p className="text-[10px] font-black text-secondary uppercase tracking-[0.2em] px-2 opacity-60">Resultados de búsqueda</p>
+                        <div className="space-y-3 mt-8 animate-slide-up">
+                            <p className="text-[10px] font-black text-secondary uppercase tracking-[0.2em] px-3 opacity-60">Resultados encontrados</p>
                             {searchResults.map((food, i) => (
-                                <div key={i} className="relative group">
-                                    <button
-                                        onClick={() => handleSelectFood(food)} // Open Modal
-                                        className="w-full p-5 bg-card rounded-[2rem] border border-theme text-left hover:border-indigo-500 transition-all shadow-sm active:scale-[0.98]"
-                                        type="button"
-                                    >
-                                        <div className="flex justify-between items-center">
-                                            <div className="flex-1 min-w-0 pr-6">
-                                                <p className="font-black text-sm uppercase tracking-tight group-hover:text-indigo-600 transition-colors">{food.name}</p>
-                                                <p className="text-[10px] font-bold text-secondary mt-1 uppercase tracking-widest opacity-60">{food.portion} • {food.confidence}</p>
-                                            </div>
-                                            <div className="text-right ml-4">
-                                                <p className="text-2xl font-black text-indigo-600 dark:text-indigo-400 tracking-tighter">{Math.round(food.calories || 0)}</p>
-                                                <p className="text-[9px] font-black text-secondary uppercase opacity-40 -mt-1">Kcal</p>
-                                            </div>
-                                        </div>
-                                    </button>
-                                    <button
-                                        onClick={(e) => { e.stopPropagation(); clearAll(); }}
-                                        className="absolute -top-2 -right-2 p-2 bg-rose-500 text-white rounded-full shadow-lg hover:bg-rose-600 transition-all z-10 transform scale-90 hover:scale-110 active:scale-95"
-                                        type="button"
-                                    >
-                                        <Icons.X size={16} />
-                                    </button>
-                                </div>
+                                <button key={i} onClick={() => handleSelectFood(food)}
+                                    className="w-full p-6 bg-card rounded-[2.5rem] border border-theme text-left flex justify-between items-center shadow-md hover:border-indigo-500 transition-all group active:scale-[0.98]">
+                                    <div className="flex-1 pr-4">
+                                        <p className="font-black text-base uppercase tracking-tight text-primary group-hover:text-indigo-600 transition-colors">{food.name}</p>
+                                        <p className="text-[11px] font-bold text-secondary uppercase tracking-widest mt-0.5 opacity-70">{food.portion} • {food.confidence}</p>
+                                    </div>
+                                    <div className="text-right">
+                                        <p className="text-3xl font-black text-indigo-600 dark:text-indigo-400 tracking-tighter leading-none">{Math.round(food.calories || 0)}</p>
+                                        <p className="text-[10px] font-black text-secondary uppercase opacity-40">Kcal</p>
+                                    </div>
+                                </button>
                             ))}
-                            <button onClick={clearAll} className="w-full py-3 text-[10px] font-black text-secondary uppercase tracking-widest hover:text-primary transition-colors">Limpiar búsqueda</button>
                         </div>
                     )}
 
                     {/* Quick Supplements */}
-                    <div className="space-y-2">
-                        <p className="text-[10px] font-black text-secondary uppercase tracking-widest px-2 opacity-60">💊 Suplementación Rápida</p>
+                    <div className="space-y-3 mt-10">
+                        <div className="flex items-center gap-2 px-3">
+                            <Icons.Zap size={16} className="text-indigo-600" />
+                            <p className="text-[10px] font-black text-secondary uppercase tracking-widest opacity-60">Suplementación Express</p>
+                        </div>
                         <div className="grid grid-cols-4 gap-2">
-                            {/* Buttons maintained from previous version */}
-                            <button
-                                onClick={() => {
-                                    const input = window.prompt('💊 Magnesio\n\nCantidad (mg):', 200);
-                                    if (input) {
-                                        const qty = parseFloat(input) || 0;
-                                        if (qty > 0) addLog({ name: 'Magnesio', calories: 0, protein: 0, carbs: 0, fat: 0, na: 0, k: 0, ca: 0, mg: qty, extraMinerals: [], portion: `${qty}mg`, dataSource: 'local' });
-                                    }
-                                }}
-                                className="bg-card border border-theme p-3 rounded-2xl flex flex-col items-center gap-1 active:scale-95 transition-all hover:border-indigo-500 shadow-sm"
-                            >
-                                <span className="text-2xl">💊</span>
-                                <span className="text-[9px] font-bold">Magnesio</span>
-                                <span className="text-[8px] text-secondary bg-card-alt px-2 py-0.5 rounded-full">200mg</span>
-                            </button>
-
-                            <button
-                                onClick={() => {
-                                    const input = window.prompt('⚡ Taurina\n\nCantidad (mg):', 1000);
-                                    if (input) {
-                                        const qty = parseFloat(input) || 0;
-                                        if (qty > 0) addLog({ name: 'Taurina', calories: 0, protein: 0, carbs: 0, fat: 0, na: 0, k: 0, ca: 0, mg: 0, extraMinerals: [{ label: 'Taurina', value: qty }], portion: `${qty}mg`, dataSource: 'local' });
-                                    }
-                                }}
-                                className="bg-card border border-theme p-3 rounded-2xl flex flex-col items-center gap-1 active:scale-95 transition-all hover:border-indigo-500 shadow-sm"
-                            >
-                                <span className="text-2xl">⚡</span>
-                                <span className="text-[9px] font-bold">Taurina</span>
-                                <span className="text-[8px] text-secondary bg-card-alt px-2 py-0.5 rounded-full">1000mg</span>
-                            </button>
-
-                            <button
-                                onClick={() => {
-                                    const input = window.prompt('💪 Evolate (Whey Isolate)\n\n1 scoop = 30g (26g prot)\n\n¿Cuántos scoops?', 1);
-                                    if (input) {
-                                        const scoops = parseFloat(input) || 0;
-                                        if (scoops > 0) addLog({
-                                            name: `Evolate (${scoops} scoop)`,
-                                            calories: Math.round(112 * scoops),
-                                            protein: Math.round(26 * scoops),
-                                            carbs: Math.round(1.2 * scoops),
-                                            fat: Math.round(0.5 * scoops * 10) / 10,
-                                            na: Math.round(108 * scoops),
-                                            k: 0, ca: 0, mg: 0,
-                                            extraMinerals: [],
-                                            portion: `${scoops} scoop (${30 * scoops}g)`,
-                                            dataSource: 'local'
-                                        });
-                                    }
-                                }}
-                                className="bg-card border border-theme p-3 rounded-2xl flex flex-col items-center gap-1 active:scale-95 transition-all hover:border-indigo-500 shadow-sm"
-                            >
-                                <span className="text-2xl">💪</span>
-                                <span className="text-[9px] font-bold">Evolate</span>
-                                <span className="text-[8px] text-secondary bg-card-alt px-2 py-0.5 rounded-full">Isolate</span>
-                            </button>
-
-                            <button
-                                onClick={() => {
-                                    const input = window.prompt('🔋 Evorecovery\n\n1 scoop = 50g\n14g prot + 27g carbs\n\n¿Cuántos scoops?', 1);
-                                    if (input) {
-                                        const scoops = parseFloat(input) || 0;
-                                        if (scoops > 0) addLog({
-                                            name: `Evorecovery (${scoops} scoop)`,
-                                            calories: Math.round(163 * scoops),
-                                            protein: Math.round(14 * scoops),
-                                            carbs: Math.round(26.5 * scoops),
-                                            fat: 0,
-                                            na: Math.round(838 * scoops),
-                                            k: Math.round(146 * scoops),
-                                            ca: Math.round(60 * scoops),
-                                            mg: Math.round(60 * scoops),
-                                            extraMinerals: [],
-                                            portion: `${scoops} scoop (${50 * scoops}g)`,
-                                            dataSource: 'local'
-                                        });
-                                    }
-                                }}
-                                className="bg-card border border-theme p-3 rounded-2xl flex flex-col items-center gap-1 active:scale-95 transition-all hover:border-indigo-500 shadow-sm"
-                            >
-                                <span className="text-2xl">🔋</span>
-                                <span className="text-[9px] font-bold truncate w-full text-center">Evorecovery</span>
-                                <span className="text-[8px] text-secondary bg-card-alt px-2 py-0.5 rounded-full">Recovery</span>
-                            </button>
+                            {[
+                                { name: 'Magnesio', icon: '💊', mg: 200, color: 'bg-violet-100 text-violet-700' },
+                                { name: 'Taurina', icon: '⚡', mg: 1000, taurine: true, color: 'bg-amber-100 text-amber-700' },
+                                { name: 'Evolate', icon: '💪', cal: 112, prot: 26, carbs: 1.2, fat: 0.5, na: 108, color: 'bg-blue-100 text-blue-700' },
+                                { name: 'Evorecovery', icon: '🔋', cal: 163, prot: 14, carbs: 26.5, na: 838, k: 146, ca: 60, mg: 60, color: 'bg-emerald-100 text-emerald-700' }
+                            ].map((s, i) => (
+                                <button key={i} onClick={() => handleSelectFood({
+                                    name: s.name,
+                                    calories: s.cal || 0, protein: s.prot || 0, carbs: s.carbs || 0, fat: s.fat || 0,
+                                    na: s.na || 0, k: s.k || 0, ca: s.ca || 0, mg: s.mg || 0,
+                                    extraMinerals: s.taurine ? [{ label: 'Taurina', value: 1000 }] : [],
+                                    portion: s.name === 'Magnesio' ? '200mg' : s.name === 'Taurina' ? '1000mg' : '1 scoop'
+                                })} className="bg-card border border-theme p-4 rounded-3xl flex flex-col items-center gap-2 active:scale-90 transition-all shadow-sm border-b-4 border-slate-200 dark:border-slate-800">
+                                    <span className="text-2xl">{s.icon}</span>
+                                    <span className="text-[8px] font-black truncate w-full text-center uppercase tracking-tighter">{s.name}</span>
+                                </button>
+                            ))}
                         </div>
                     </div>
                 </>

@@ -27,6 +27,11 @@ const SaludView = ({ dayLogs = [], allLogs = [], tssToday = 0, dinnerFeedback = 
     const [selectedSymptoms, setSelectedSymptoms] = useState([]);
     const [feedbackSaved, setFeedbackSaved] = useState(false);
 
+    // State for Dinner History Modal
+    const [showDinnerHistory, setShowDinnerHistory] = useState(false);
+    const [historyDateFilter, setHistoryDateFilter] = useState('all'); // 'all', '7d', '30d', '90d'
+    const [historySymptomFilter, setHistorySymptomFilter] = useState('all'); // 'all', 'gases', 'pulso_alto', etc.
+
     // State for mineral display mode (true = %, false = mg)
     const [mineralDisplayMode, setMineralDisplayMode] = useState({});
 
@@ -96,9 +101,9 @@ const SaludView = ({ dayLogs = [], allLogs = [], tssToday = 0, dinnerFeedback = 
             setIntervalsLoading(true);
             try {
                 const today = new Date().toISOString().split('T')[0];
-                const sevenDaysAgo = new Date();
-                sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-                const oldest = sevenDaysAgo.toISOString().split('T')[0];
+                const fourteenDaysAgo = new Date();
+                fourteenDaysAgo.setDate(fourteenDaysAgo.getDate() - 14);
+                const oldest = fourteenDaysAgo.toISOString().split('T')[0];
 
                 const apiUrl = `https://intervals.icu/api/v1/athlete/${ATHLETE_ID}/wellness?oldest=${oldest}&newest=${today}`;
                 const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(apiUrl)}`;
@@ -394,24 +399,72 @@ const SaludView = ({ dayLogs = [], allLogs = [], tssToday = 0, dinnerFeedback = 
 
                         {todayDinnerLogs.length > 0 ? (
                             <>
-                                <div className="grid grid-cols-4 gap-2 mb-2">
-                                    <div className="bg-card-alt/50 p-2 rounded-lg text-center border border-theme">
-                                        <p className="text-[9px] text-secondary">Grasa</p>
-                                        <p className="font-bold text-sm">{Math.round(dinnerTotals.fat)}g</p>
-                                    </div>
-                                    <div className="bg-card-alt/50 p-2 rounded-lg text-center border border-theme">
-                                        <p className="text-[9px] text-secondary">Fibra</p>
-                                        <p className="font-bold text-sm">{Math.round(dinnerTotals.fiber)}g</p>
-                                    </div>
-                                    <div className="bg-card-alt/50 p-2 rounded-lg text-center border border-theme">
-                                        <p className="text-[9px] text-secondary">Prot</p>
-                                        <p className="font-bold text-sm">{Math.round(dinnerTotals.protein)}g</p>
-                                    </div>
-                                    <div className="bg-card-alt/50 p-2 rounded-lg text-center border border-theme">
-                                        <p className="text-[9px] text-secondary">Kcal</p>
-                                        <p className="font-bold text-sm">{Math.round(dinnerTotals.calories)}</p>
-                                    </div>
-                                </div>
+                                {(() => {
+                                    // Dinner thresholds based on day type
+                                    const dinnerLimits = isTrainingDay ? {
+                                        fat: { optimal: 20, warning: 30 },
+                                        fiber: { optimal: 8, warning: 12 },
+                                        calories: { optimal: 600, warning: 800 }
+                                    } : {
+                                        fat: { optimal: 15, warning: 25 },
+                                        fiber: { optimal: 6, warning: 10 },
+                                        calories: { optimal: 500, warning: 700 }
+                                    };
+
+                                    const getTrafficLight = (value, limits) => {
+                                        if (value <= limits.optimal) return '🟢';
+                                        if (value <= limits.warning) return '🟡';
+                                        return '🔴';
+                                    };
+
+                                    const getBgColor = (value, limits) => {
+                                        if (value <= limits.optimal) return 'bg-emerald-500/10 border-emerald-500/30';
+                                        if (value <= limits.warning) return 'bg-amber-500/10 border-amber-500/30';
+                                        return 'bg-rose-500/10 border-rose-500/30';
+                                    };
+
+                                    const getTextColor = (value, limits) => {
+                                        if (value <= limits.optimal) return 'text-emerald-400';
+                                        if (value <= limits.warning) return 'text-amber-400';
+                                        return 'text-rose-400';
+                                    };
+
+                                    return (
+                                        <div className="grid grid-cols-4 gap-2 mb-2">
+                                            <div className={`p-2 rounded-lg text-center border ${getBgColor(dinnerTotals.fat, dinnerLimits.fat)}`}>
+                                                <p className="text-[9px] text-secondary">Grasa</p>
+                                                <div className="flex items-center justify-center gap-1">
+                                                    <p className={`font-bold text-sm ${getTextColor(dinnerTotals.fat, dinnerLimits.fat)}`}>
+                                                        {Math.round(dinnerTotals.fat)}g
+                                                    </p>
+                                                    <span className="text-xs">{getTrafficLight(dinnerTotals.fat, dinnerLimits.fat)}</span>
+                                                </div>
+                                            </div>
+                                            <div className={`p-2 rounded-lg text-center border ${getBgColor(dinnerTotals.fiber, dinnerLimits.fiber)}`}>
+                                                <p className="text-[9px] text-secondary">Fibra</p>
+                                                <div className="flex items-center justify-center gap-1">
+                                                    <p className={`font-bold text-sm ${getTextColor(dinnerTotals.fiber, dinnerLimits.fiber)}`}>
+                                                        {Math.round(dinnerTotals.fiber)}g
+                                                    </p>
+                                                    <span className="text-xs">{getTrafficLight(dinnerTotals.fiber, dinnerLimits.fiber)}</span>
+                                                </div>
+                                            </div>
+                                            <div className="bg-card-alt/50 p-2 rounded-lg text-center border border-theme">
+                                                <p className="text-[9px] text-secondary">Prot</p>
+                                                <p className="font-bold text-sm">{Math.round(dinnerTotals.protein)}g</p>
+                                            </div>
+                                            <div className={`p-2 rounded-lg text-center border ${getBgColor(dinnerTotals.calories, dinnerLimits.calories)}`}>
+                                                <p className="text-[9px] text-secondary">Kcal</p>
+                                                <div className="flex items-center justify-center gap-1">
+                                                    <p className={`font-bold text-sm ${getTextColor(dinnerTotals.calories, dinnerLimits.calories)}`}>
+                                                        {Math.round(dinnerTotals.calories)}
+                                                    </p>
+                                                    <span className="text-xs">{getTrafficLight(dinnerTotals.calories, dinnerLimits.calories)}</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    );
+                                })()}
                                 <div className="flex flex-wrap gap-1">
                                     {todayDinnerLogs.map((log, i) => (
                                         <span key={i} className="text-[10px] bg-card-alt px-2 py-1 rounded-lg font-medium border border-theme">
@@ -493,6 +546,7 @@ const SaludView = ({ dayLogs = [], allLogs = [], tssToday = 0, dinnerFeedback = 
                     { id: 'hrv_bajo', emoji: '📉', label: 'HRV↓' },
                     { id: 'fa', emoji: '⚡', label: 'FA' },
                     { id: 'reflujo', emoji: '🔥', label: 'Reflujo' },
+                    { id: 'estres', emoji: '😰', label: 'Estrés' },
                     { id: 'bien', emoji: '💤', label: 'Bien' }
                 ];
 
@@ -562,46 +616,122 @@ const SaludView = ({ dayLogs = [], allLogs = [], tssToday = 0, dinnerFeedback = 
                         {/* Header */}
                         <div className="flex justify-between items-center mb-4">
                             <div>
-                                <p className="text-[10px] font-black text-secondary uppercase tracking-widest">📊 Análisis de Cena (Ayer)</p>
-                                <p className={`text-sm font-bold text-${config.color}-600 dark:text-${config.color}-400`}>
+                                <p className="text-base font-black text-secondary uppercase tracking-widest">📊 Análisis de Cena (Ayer)</p>
+                                <p className={`text-xl font-bold text-${config.color}-600 dark:text-${config.color}-400`}>
                                     {config.emoji} {config.label}
                                 </p>
                             </div>
-                            <div className="text-right">
-                                <p className="text-xs font-bold text-white">{yesterday.toLocaleDateString('es-ES', { weekday: 'short', day: '2-digit', month: 'short' })}</p>
-                                <p className="text-[9px] text-secondary">Cómo te sentó</p>
+                            <div className="text-right flex flex-col items-end gap-1">
+                                <p className="text-lg font-bold text-white">{yesterday.toLocaleDateString('es-ES', { weekday: 'short', day: '2-digit', month: 'short' })}</p>
+                                <button
+                                    onClick={() => setShowDinnerHistory(true)}
+                                    className="px-3 py-1.5 rounded-full text-sm font-bold bg-emerald-600 text-white hover:bg-emerald-700 transition-all active:scale-95 flex items-center gap-1"
+                                >
+                                    🍽️ Historial
+                                </button>
                             </div>
                         </div>
 
                         {/* Nutrition vs Biometric Comparison */}
                         <div className="grid grid-cols-2 gap-3 mb-4">
                             {/* Nutrition Side */}
-                            <div className="bg-card-alt/50 p-3 rounded-xl">
-                                <p className="text-[9px] font-black text-secondary uppercase tracking-wider mb-2">🍽️ Nutrición</p>
-                                <div className="space-y-1 text-[10px]">
-                                    <div className="flex justify-between">
-                                        <span className="text-secondary">Carga:</span>
-                                        <span className="font-bold text-white">{digestiveLoadValue}/10</span>
-                                    </div>
-                                    <div className="flex justify-between">
-                                        <span className="text-secondary">Grasa:</span>
-                                        <span className="font-bold text-white">{Math.round(dinnerTotals.fat)}g</span>
-                                    </div>
-                                    <div className="flex justify-between">
-                                        <span className="text-secondary">Fibra:</span>
-                                        <span className="font-bold text-white">{Math.round(dinnerTotals.fiber)}g</span>
-                                    </div>
-                                    <div className="flex justify-between">
-                                        <span className="text-secondary">Calorías:</span>
-                                        <span className="font-bold text-white">{Math.round(dinnerTotals.calories)}</span>
-                                    </div>
+                            <div className="bg-card-alt/50 p-4 rounded-xl">
+                                <p className="text-base font-black text-secondary uppercase tracking-wider mb-2">🍽️ Nutrición</p>
+                                <div className="space-y-2 text-base">
+                                    {(() => {
+                                        // Dinner thresholds based on day type
+                                        const dinnerLimits = isTrainingDay ? {
+                                            fat: { optimal: 20, warning: 30, label: 'Grasa' },
+                                            fiber: { optimal: 8, warning: 12, label: 'Fibra' },
+                                            calories: { optimal: 600, warning: 800, label: 'Calorías' }
+                                        } : {
+                                            fat: { optimal: 15, warning: 25, label: 'Grasa' },
+                                            fiber: { optimal: 6, warning: 10, label: 'Fibra' },
+                                            calories: { optimal: 500, warning: 700, label: 'Calorías' }
+                                        };
+
+                                        const getTrafficLight = (value, limits) => {
+                                            if (value <= limits.optimal) return '🟢';
+                                            if (value <= limits.warning) return '🟡';
+                                            return '🔴';
+                                        };
+
+                                        const getTextColor = (value, limits) => {
+                                            if (value <= limits.optimal) return 'text-emerald-400';
+                                            if (value <= limits.warning) return 'text-amber-400';
+                                            return 'text-rose-400';
+                                        };
+
+                                        return (
+                                            <>
+                                                <div className="flex justify-between">
+                                                    <span className="text-secondary">Carga:</span>
+                                                    <span className="font-bold text-white">{digestiveLoadValue}/10</span>
+                                                </div>
+
+                                                {/* Grasa - Clickable */}
+                                                <details className="group">
+                                                    <summary className="flex justify-between items-center cursor-pointer list-none [&::-webkit-details-marker]:hidden">
+                                                        <span className="text-secondary">Grasa:</span>
+                                                        <div className="flex items-center gap-1.5">
+                                                            <span className={`font-bold ${getTextColor(dinnerTotals.fat, dinnerLimits.fat)}`}>
+                                                                {Math.round(dinnerTotals.fat)}g
+                                                            </span>
+                                                            <span className="text-lg">{getTrafficLight(dinnerTotals.fat, dinnerLimits.fat)}</span>
+                                                        </div>
+                                                    </summary>
+                                                    <div className="mt-1 pl-2 text-[9px] text-secondary border-l-2 border-theme">
+                                                        <p>🟢 Óptimo: ≤{dinnerLimits.fat.optimal}g</p>
+                                                        <p>🟡 Atención: ≤{dinnerLimits.fat.warning}g</p>
+                                                        <p>🔴 Exceso: &gt;{dinnerLimits.fat.warning}g</p>
+                                                    </div>
+                                                </details>
+
+                                                {/* Fibra - Clickable */}
+                                                <details className="group">
+                                                    <summary className="flex justify-between items-center cursor-pointer list-none [&::-webkit-details-marker]:hidden">
+                                                        <span className="text-secondary">Fibra:</span>
+                                                        <div className="flex items-center gap-1.5">
+                                                            <span className={`font-bold ${getTextColor(dinnerTotals.fiber, dinnerLimits.fiber)}`}>
+                                                                {Math.round(dinnerTotals.fiber)}g
+                                                            </span>
+                                                            <span className="text-lg">{getTrafficLight(dinnerTotals.fiber, dinnerLimits.fiber)}</span>
+                                                        </div>
+                                                    </summary>
+                                                    <div className="mt-1 pl-2 text-[9px] text-secondary border-l-2 border-theme">
+                                                        <p>🟢 Óptimo: ≤{dinnerLimits.fiber.optimal}g</p>
+                                                        <p>🟡 Atención: ≤{dinnerLimits.fiber.warning}g</p>
+                                                        <p>🔴 Exceso: &gt;{dinnerLimits.fiber.warning}g</p>
+                                                    </div>
+                                                </details>
+
+                                                {/* Calorías - Clickable */}
+                                                <details className="group">
+                                                    <summary className="flex justify-between items-center cursor-pointer list-none [&::-webkit-details-marker]:hidden">
+                                                        <span className="text-secondary">Calorías:</span>
+                                                        <div className="flex items-center gap-1.5">
+                                                            <span className={`font-bold ${getTextColor(dinnerTotals.calories, dinnerLimits.calories)}`}>
+                                                                {Math.round(dinnerTotals.calories)}
+                                                            </span>
+                                                            <span className="text-lg">{getTrafficLight(dinnerTotals.calories, dinnerLimits.calories)}</span>
+                                                        </div>
+                                                    </summary>
+                                                    <div className="mt-1 pl-2 text-[9px] text-secondary border-l-2 border-theme">
+                                                        <p>🟢 Óptimo: ≤{dinnerLimits.calories.optimal}</p>
+                                                        <p>🟡 Atención: ≤{dinnerLimits.calories.warning}</p>
+                                                        <p>🔴 Exceso: &gt;{dinnerLimits.calories.warning}</p>
+                                                    </div>
+                                                </details>
+                                            </>
+                                        );
+                                    })()}
                                 </div>
                             </div>
 
                             {/* Biometric Side */}
-                            <div className="bg-card-alt/50 p-3 rounded-xl">
-                                <p className="text-[9px] font-black text-secondary uppercase tracking-wider mb-2">📊 Biométrica</p>
-                                <div className="space-y-1 text-[10px]">
+                            <div className="bg-card-alt/50 p-4 rounded-xl">
+                                <p className="text-base font-black text-secondary uppercase tracking-wider mb-2">📊 Biométrica</p>
+                                <div className="space-y-2 text-base">
                                     <div className="flex justify-between">
                                         <span className="text-secondary">HRV:</span>
                                         <span className={`font-bold ${hrvDelta !== null && hrvDelta < -10 ? 'text-rose-600' : 'text-white'}`}>
@@ -669,10 +799,10 @@ const SaludView = ({ dayLogs = [], allLogs = [], tssToday = 0, dinnerFeedback = 
 
                         {/* Dinner Foods */}
                         <div className="mb-3">
-                            <p className="text-[9px] font-black text-secondary uppercase tracking-wider mb-1">Platos:</p>
+                            <p className="text-base font-black text-secondary uppercase tracking-wider mb-2">Platos:</p>
                             <div className="flex flex-wrap gap-1">
                                 {yesterdayLogs.map((log, i) => (
-                                    <span key={i} className="text-[10px] bg-card px-2 py-1 rounded-lg font-medium">
+                                    <span key={i} className="text-base bg-card px-2 py-1 rounded-lg font-medium border border-theme">
                                         {log.name}
                                     </span>
                                 ))}
@@ -681,13 +811,13 @@ const SaludView = ({ dayLogs = [], allLogs = [], tssToday = 0, dinnerFeedback = 
 
                         {/* Symptom Tags (Punto 2) */}
                         <div className="mb-3">
-                            <p className="text-[9px] font-black text-secondary uppercase tracking-wider mb-2">¿Cómo te sentó?</p>
+                            <p className="text-base font-black text-secondary uppercase tracking-wider mb-2">¿Cómo te sentó?</p>
                             <div className="flex flex-wrap gap-2">
                                 {symptomTags.map(tag => (
                                     <button
                                         key={tag.id}
                                         onClick={() => toggleSymptom(tag.id)}
-                                        className={`px-3 py-1.5 rounded-xl text-[10px] font-bold transition-all ${selectedSymptoms.includes(tag.id)
+                                        className={`px-4 py-2 rounded-xl text-base font-bold transition-all ${selectedSymptoms.includes(tag.id)
                                             ? tag.id === 'fa'
                                                 ? 'bg-rose-600 text-white shadow-lg scale-105'
                                                 : tag.id === 'bien'
@@ -705,7 +835,7 @@ const SaludView = ({ dayLogs = [], allLogs = [], tssToday = 0, dinnerFeedback = 
                         {/* Feedback Status */}
                         {selectedSymptoms.length > 0 && (
                             <div className="text-center">
-                                <p className="text-[10px] text-secondary">
+                                <p className="text-sm text-secondary">
                                     ✓ Sensaciones registradas: {selectedSymptoms.map(s => getSymptomEmoji(s)).join(' ')}
                                 </p>
                             </div>
@@ -714,7 +844,7 @@ const SaludView = ({ dayLogs = [], allLogs = [], tssToday = 0, dinnerFeedback = 
                         {/* 7-Day Biofeedback Timeline (Punto 6) */}
                         {intervalsData.length > 0 && (
                             <div className="mt-4 pt-4 border-t border-gray-300 dark:border-gray-700">
-                                <p className="text-[9px] font-black text-secondary uppercase tracking-wider mb-3">Últimos 7 días</p>
+                                <p className="text-sm font-black text-secondary uppercase tracking-wider mb-3">Últimos 7 días</p>
                                 <div className="space-y-2">
                                     {/* HRV Mini Chart */}
                                     <div className="flex items-end justify-between h-16 gap-1">
@@ -730,7 +860,7 @@ const SaludView = ({ dayLogs = [], allLogs = [], tssToday = 0, dinnerFeedback = 
                                                         style={{ height: `${height}%` }}
                                                         title={`${day.hrv || '-'} ms`}
                                                     />
-                                                    <span className="text-[8px] text-secondary font-mono">{day.hrv || '-'}</span>
+                                                    <span className="text-[10px] text-secondary font-mono">{day.hrv || '-'}</span>
                                                 </div>
                                             );
                                         })}
@@ -755,10 +885,10 @@ const SaludView = ({ dayLogs = [], allLogs = [], tssToday = 0, dinnerFeedback = 
 
                                                 return (
                                                     <div key={day.id} className="flex-1 text-center">
-                                                        <div className="text-[10px]">
+                                                        <div className="text-xs">
                                                             {symptoms.length > 0 ? symptoms.map(s => getSymptomEmoji(s)).join('') : '·'}
                                                         </div>
-                                                        <div className="text-[7px] text-secondary mt-0.5">
+                                                        <div className="text-[9px] text-secondary mt-0.5">
                                                             {new Date(day.id).toLocaleDateString('es-ES', { day: '2-digit', month: 'numeric' }).replace('/', '/')}
                                                         </div>
                                                     </div>
@@ -766,8 +896,8 @@ const SaludView = ({ dayLogs = [], allLogs = [], tssToday = 0, dinnerFeedback = 
                                             } catch (e) {
                                                 return (
                                                     <div key={day.id} className="flex-1 text-center">
-                                                        <div className="text-[10px]">·</div>
-                                                        <div className="text-[7px] text-secondary mt-0.5">
+                                                        <div className="text-xs">·</div>
+                                                        <div className="text-[9px] text-secondary mt-0.5">
                                                             {new Date(day.id).toLocaleDateString('es-ES', { day: '2-digit', month: 'numeric' }).replace('/', '/')}
                                                         </div>
                                                     </div>
@@ -778,6 +908,187 @@ const SaludView = ({ dayLogs = [], allLogs = [], tssToday = 0, dinnerFeedback = 
                                 </div>
                             </div>
                         )}
+                    </div>
+                );
+            })()}
+
+            {/* DINNER HISTORY MODAL */}
+            {showDinnerHistory && (() => {
+                // Build complete dinner history from logs and feedback
+                // ONLY use dateISO (YYYY-MM-DD format) to avoid parsing issues
+                const todayISO = new Date().toISOString().split('T')[0];
+
+                const allDinnerDates = [...new Set(
+                    allCleanLogs
+                        .filter(l => l.timeBlock === 'noche' && l.dateISO) // Only use logs with valid dateISO
+                        .map(l => l.dateISO)
+                        .filter(d => d && d.match(/^\d{4}-\d{2}-\d{2}$/) && d <= todayISO) // Valid format and not future
+                )].sort((a, b) => b.localeCompare(a)); // String sort works for ISO dates
+
+                // Apply date filter
+                const now = new Date();
+                const filteredDates = allDinnerDates.filter(dateISO => {
+                    if (historyDateFilter === 'all') return true;
+                    const date = new Date(dateISO + 'T12:00:00'); // Add time to avoid timezone issues
+                    const daysDiff = Math.ceil((now - date) / (1000 * 60 * 60 * 24));
+                    if (historyDateFilter === '7d') return daysDiff <= 7;
+                    if (historyDateFilter === '30d') return daysDiff <= 30;
+                    if (historyDateFilter === '90d') return daysDiff <= 90;
+                    return true;
+                });
+
+                // Build dinner entries with symptoms
+                const dinnerEntries = filteredDates.map(dateISO => {
+                    const logs = allCleanLogs.filter(l => l.dateISO === dateISO && l.timeBlock === 'noche');
+                    const feedback = dinnerFeedback.find(f => f.dateISO === dateISO || f.id === dateISO);
+                    const symptoms = feedback?.symptoms || [];
+
+                    const totals = logs.reduce((acc, l) => ({
+                        fat: acc.fat + (Number(l.fat) || 0),
+                        fiber: acc.fiber + (Number(l.fiber) || 0),
+                        protein: acc.protein + (Number(l.protein) || 0),
+                        calories: acc.calories + (Number(l.calories) || 0)
+                    }), { fat: 0, fiber: 0, protein: 0, calories: 0 });
+
+                    const load = calcDinnerLoad(logs);
+
+                    return {
+                        date: dateISO,
+                        foods: logs.map(l => l.name).filter(Boolean),
+                        symptoms,
+                        load,
+                        totals
+                    };
+                });
+
+                // Apply symptom filter
+                const finalEntries = historySymptomFilter === 'all'
+                    ? dinnerEntries
+                    : dinnerEntries.filter(e => e.symptoms.includes(historySymptomFilter));
+
+                const symptomOptions = [
+                    { id: 'all', label: 'Todos', emoji: '📋' },
+                    { id: 'gases', label: 'Gases', emoji: '💨' },
+                    { id: 'pulso_alto', label: 'Pulso↑', emoji: '❤️' },
+                    { id: 'hrv_bajo', label: 'HRV↓', emoji: '📉' },
+                    { id: 'fa', label: 'FA', emoji: '⚡' },
+                    { id: 'reflujo', label: 'Reflujo', emoji: '🔥' },
+                    { id: 'bien', label: 'Bien', emoji: '💤' }
+                ];
+
+                return (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
+                        <div className="bg-card w-full max-w-lg max-h-[85vh] rounded-3xl border border-theme shadow-2xl flex flex-col overflow-hidden">
+                            {/* Modal Header */}
+                            <div className="p-4 border-b border-theme flex justify-between items-center bg-gradient-to-r from-emerald-600 to-emerald-700">
+                                <h3 className="text-xl font-black text-white flex items-center gap-2">
+                                    🍽️ Historial de Cenas
+                                </h3>
+                                <button
+                                    onClick={() => setShowDinnerHistory(false)}
+                                    className="p-2 rounded-full bg-white/20 hover:bg-white/30 text-white transition-all"
+                                >
+                                    ✕
+                                </button>
+                            </div>
+
+                            {/* Filters */}
+                            <div className="p-3 border-b border-theme space-y-2 bg-card-alt/50">
+                                {/* Date Range Filter */}
+                                <div className="flex gap-1 flex-wrap">
+                                    {[
+                                        { id: 'all', label: 'Todo' },
+                                        { id: '7d', label: '7 días' },
+                                        { id: '30d', label: '30 días' },
+                                        { id: '90d', label: '90 días' }
+                                    ].map(opt => (
+                                        <button
+                                            key={opt.id}
+                                            onClick={() => setHistoryDateFilter(opt.id)}
+                                            className={`px-3 py-1 rounded-full text-xs font-bold transition-all ${historyDateFilter === opt.id
+                                                ? 'bg-emerald-600 text-white'
+                                                : 'bg-card text-secondary hover:bg-card-alt border border-theme'
+                                                }`}
+                                        >
+                                            {opt.label}
+                                        </button>
+                                    ))}
+                                </div>
+                                {/* Symptom Filter */}
+                                <div className="flex gap-1 flex-wrap">
+                                    {symptomOptions.map(opt => (
+                                        <button
+                                            key={opt.id}
+                                            onClick={() => setHistorySymptomFilter(opt.id)}
+                                            className={`px-2 py-1 rounded-full text-xs font-bold transition-all ${historySymptomFilter === opt.id
+                                                ? 'bg-amber-600 text-white'
+                                                : 'bg-card text-secondary hover:bg-card-alt border border-theme'
+                                                }`}
+                                        >
+                                            {opt.emoji} {opt.label}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Dinner List */}
+                            <div className="flex-1 overflow-y-auto p-3 space-y-3">
+                                {finalEntries.length === 0 ? (
+                                    <div className="text-center py-10 text-secondary">
+                                        <p className="text-4xl mb-2">🍽️</p>
+                                        <p className="font-bold">No hay cenas registradas</p>
+                                        <p className="text-sm">con los filtros seleccionados</p>
+                                    </div>
+                                ) : (
+                                    finalEntries.map((entry, idx) => (
+                                        <div
+                                            key={entry.date}
+                                            className={`p-4 rounded-2xl border border-theme bg-card-alt/30 space-y-2 ${entry.symptoms.includes('fa') ? 'border-l-4 border-l-rose-500' :
+                                                entry.symptoms.includes('bien') ? 'border-l-4 border-l-emerald-500' :
+                                                    entry.symptoms.length > 0 ? 'border-l-4 border-l-amber-500' : ''
+                                                }`}
+                                        >
+                                            {/* Date & Load */}
+                                            <div className="flex justify-between items-center">
+                                                <p className="font-bold text-white">
+                                                    {new Date(entry.date).toLocaleDateString('es-ES', { weekday: 'short', day: '2-digit', month: 'short' })}
+                                                </p>
+                                                <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${entry.load <= 4 ? 'bg-emerald-500/20 text-emerald-400' :
+                                                    entry.load <= 6 ? 'bg-amber-500/20 text-amber-400' :
+                                                        'bg-rose-500/20 text-rose-400'
+                                                    }`}>
+                                                    Carga: {entry.load}/10
+                                                </span>
+                                            </div>
+                                            {/* Foods */}
+                                            <div className="flex flex-wrap gap-1">
+                                                {entry.foods.map((food, i) => (
+                                                    <span key={i} className="text-sm bg-card px-2 py-0.5 rounded-lg text-secondary border border-theme">
+                                                        {food}
+                                                    </span>
+                                                ))}
+                                            </div>
+                                            {/* Symptoms */}
+                                            {entry.symptoms.length > 0 && (
+                                                <div className="flex gap-1 items-center">
+                                                    <span className="text-xs text-secondary">Sensaciones:</span>
+                                                    {entry.symptoms.map((s, i) => (
+                                                        <span key={i} className="text-lg" title={getSymptomLabel(s)}>
+                                                            {getSymptomEmoji(s)}
+                                                        </span>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+                                    ))
+                                )}
+                            </div>
+
+                            {/* Modal Footer */}
+                            <div className="p-3 border-t border-theme text-center text-xs text-secondary">
+                                {finalEntries.length} cena{finalEntries.length !== 1 ? 's' : ''} encontrada{finalEntries.length !== 1 ? 's' : ''}
+                            </div>
+                        </div>
                     </div>
                 );
             })()}
@@ -798,41 +1109,41 @@ const SaludView = ({ dayLogs = [], allLogs = [], tssToday = 0, dinnerFeedback = 
 
                 return (
                     <div className="bg-card p-5 rounded-3xl border border-theme mb-4 border-l-4 border-l-emerald-500">
-                        <p className="text-[10px] font-black text-secondary uppercase tracking-widest mb-3">🧬 Bio-Tolerancia Nocturna</p>
-                        <p className="text-[9px] text-secondary mb-4">Basado en tus últimas {foodAnalysis.totalDinners} cenas</p>
+                        <p className="text-base font-black text-secondary uppercase tracking-widest mb-3">🧬 Bio-Tolerancia Nocturna</p>
+                        <p className="text-base text-secondary mb-4">Basado en tus últimas {foodAnalysis.totalDinners} cenas</p>
 
                         <div className="grid grid-cols-2 gap-4">
                             {/* Well Tolerated */}
                             <div>
-                                <p className="text-[9px] font-black text-emerald-600 dark:text-emerald-400 uppercase tracking-wider mb-2">🟢 Mejor tolerados</p>
+                                <p className="text-base font-black text-emerald-600 dark:text-emerald-400 uppercase tracking-wider mb-2">🟢 Mejor tolerados</p>
                                 {foodAnalysis.wellTolerated.length > 0 ? (
                                     <div className="space-y-1">
                                         {foodAnalysis.wellTolerated.map((food, i) => (
-                                            <div key={i} className="flex items-center justify-between bg-emerald-500/10 px-2 py-1 rounded-lg">
-                                                <span className="text-[10px] font-medium truncate max-w-[100px]">{food.name}</span>
-                                                <span className="text-[9px] text-emerald-600 dark:text-emerald-400 font-bold">{Math.round(food.stableRatio * 100)}%</span>
+                                            <div key={i} className="flex items-center justify-between bg-emerald-500/10 px-2 py-2 rounded-lg">
+                                                <span className="text-base font-medium truncate max-w-[120px]">{food.name}</span>
+                                                <span className="text-base text-emerald-600 dark:text-emerald-400 font-bold">{Math.round(food.stableRatio * 100)}%</span>
                                             </div>
                                         ))}
                                     </div>
                                 ) : (
-                                    <p className="text-[10px] text-secondary italic">Sin datos aún</p>
+                                    <p className="text-xs text-secondary italic">Sin datos aún</p>
                                 )}
                             </div>
 
                             {/* To Watch */}
                             <div>
-                                <p className="text-[9px] font-black text-amber-600 dark:text-amber-400 uppercase tracking-wider mb-2">🟡 A vigilar en cenas</p>
+                                <p className="text-base font-black text-amber-600 dark:text-amber-400 uppercase tracking-wider mb-2">🟡 A vigilar en cenas</p>
                                 {foodAnalysis.toWatch.length > 0 ? (
                                     <div className="space-y-1">
                                         {foodAnalysis.toWatch.map((food, i) => (
-                                            <div key={i} className="flex items-center justify-between bg-amber-500/10 px-2 py-1 rounded-lg">
-                                                <span className="text-[10px] font-medium truncate max-w-[100px]">{food.name}</span>
-                                                <span className="text-[9px] text-amber-600 dark:text-amber-400 font-bold">{Math.round(food.difficultRatio * 100)}%</span>
+                                            <div key={i} className="flex items-center justify-between bg-amber-500/10 px-2 py-2 rounded-lg">
+                                                <span className="text-base font-medium truncate max-w-[120px]">{food.name}</span>
+                                                <span className="text-base text-amber-600 dark:text-amber-400 font-bold">{Math.round(food.difficultRatio * 100)}%</span>
                                             </div>
                                         ))}
                                     </div>
                                 ) : (
-                                    <p className="text-[10px] text-secondary italic">¡Genial! Sin problemas</p>
+                                    <p className="text-xs text-secondary italic">¡Genial! Sin problemas</p>
                                 )}
                             </div>
                         </div>
@@ -840,54 +1151,7 @@ const SaludView = ({ dayLogs = [], allLogs = [], tssToday = 0, dinnerFeedback = 
                 );
             })()}
 
-            {/* SUGERENCIAS PARA ESTA NOCHE (only show 17:00-23:00) */}
-            {(() => {
-                const currentHour = new Date().getHours();
-                if (currentHour < 17 || currentHour > 23) return null;
 
-                const suggestions = getDinnerSuggestions(allCleanLogs, dinnerFeedback, intervalsData, isTrainingDay);
-                const topDinners = getTopDinnerCombinations(allCleanLogs, dinnerFeedback, intervalsData);
-
-                if (!suggestions.hasData && !topDinners.hasData) return null;
-
-                return (
-                    <div className="bg-card p-5 rounded-3xl border border-theme mb-4 border-l-4 border-l-blue-500">
-                        <p className="text-[10px] font-black text-secondary uppercase tracking-widest mb-3">💡 Sugerencias para Esta Noche</p>
-
-                        {/* Tips */}
-                        <div className="space-y-2 mb-4">
-                            {suggestions.tips.map((tip, i) => (
-                                <p key={i} className="text-[11px] text-secondary">• {tip}</p>
-                            ))}
-                        </div>
-
-                        {/* Top Digestivo */}
-                        {topDinners.best && (
-                            <div className="bg-emerald-500/10 p-3 rounded-xl border border-emerald-500/30 mb-2">
-                                <p className="text-[9px] font-black text-emerald-600 dark:text-emerald-400 uppercase">🥇 Tu mejor cena reciente</p>
-                                <p className="text-sm font-medium">{topDinners.best.foods}</p>
-                                <p className="text-[9px] text-secondary">{new Date(topDinners.best.date).toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric', month: 'short' })}</p>
-                            </div>
-                        )}
-
-                        {topDinners.worst && (
-                            <div className="bg-rose-500/10 p-3 rounded-xl border border-rose-500/30 mb-2">
-                                <p className="text-[9px] font-black text-rose-600 dark:text-rose-400 uppercase">⚠️ Evitar repetir</p>
-                                <p className="text-sm font-medium">{topDinners.worst.foods}</p>
-                                <p className="text-[9px] text-secondary">Síntomas: {topDinners.worst.symptoms.map(s => getSymptomEmoji(s)).join(' ')}</p>
-                            </div>
-                        )}
-
-                        {topDinners.mostReliable && (
-                            <div className="bg-blue-500/10 p-3 rounded-xl border border-blue-500/30">
-                                <p className="text-[9px] font-black text-blue-600 dark:text-blue-400 uppercase">🔁 Tu cena segura favorita</p>
-                                <p className="text-sm font-medium">{topDinners.mostReliable.foods}</p>
-                                <p className="text-[9px] text-secondary">{topDinners.mostReliable.count} veces sin problemas</p>
-                            </div>
-                        )}
-                    </div>
-                );
-            })()}
 
             {/* Omega-3 Tracking Card (moved to end) */}
             {(() => {

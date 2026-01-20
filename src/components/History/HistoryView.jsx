@@ -576,39 +576,55 @@ const HistoryView = ({ logs, onExport, onImport, user, onSaveFood, myFoods }) =>
                                 const avgSleep7 = getMetricAvg(dataIncludingToday, 7, 'sleepScore');
                                 const avgSleep21 = getMetricAvg(dataIncludingToday, 21, 'sleepScore');
 
-                                // HRV Score (40%) - v4.8 Linear 72.5-Base
-                                let hrvScore = 72.5;
-                                if (avgHRV && avgHRV21) {
+                                // HRV Score (50%) - Matching Streamlit calc_IER_v4_personal
+                                let hrvScore = 60.0;
+                                if (avgHRV && avgHRV21 && avgHRV21 > 0) {
                                     const trendRatio = avgHRV / avgHRV21;
-                                    hrvScore = 72.5 + (trendRatio - 1) * 50;
+                                    if (trendRatio >= 1.0) {
+                                        hrvScore = 75 + (trendRatio - 1) * 50;
+                                    } else {
+                                        hrvScore = 60 + (trendRatio - 0.9) * 100;
+                                    }
                                 }
                                 hrvScore = Math.max(0, Math.min(100, hrvScore));
 
-                                // RHR Score (20%) - v4.8 Linear 72.5-Base
-                                let rhrScore = 72.5;
+                                // RHR Score (15%) - Matching Streamlit thresholds
+                                let rhrScore = 60.0;
                                 if (displayData.restingHR && avgRHR21) {
                                     const deviation = displayData.restingHR - avgRHR21;
-                                    rhrScore = 72.5 - (deviation * 4); // Continuous linear logic
+                                    if (deviation <= 1) rhrScore = 90;
+                                    else if (deviation <= 2) rhrScore = 75;
+                                    else if (deviation <= 3) rhrScore = 65;
+                                    else rhrScore = 55;
                                 }
                                 rhrScore = Math.max(0, Math.min(100, rhrScore));
 
-                                // Sleep Score (25%) - v4.8 Linear 72.5-Base
-                                let sleepScore = 72.5;
-                                if (avgSleep7 && avgSleep21) {
+                                // Sleep Score (20%) - Matching Streamlit formula
+                                let sleepScore = 65.0;
+                                if (avgSleep7 && avgSleep21 && avgSleep21 > 0) {
                                     const ratio = avgSleep7 / avgSleep21;
-                                    sleepScore = 72.5 + (ratio - 1) * 40;
+                                    if (ratio >= 1.0) {
+                                        sleepScore = 80 + (ratio - 1) * 40;
+                                    } else {
+                                        sleepScore = 65 + (ratio - 0.9) * 100;
+                                    }
                                 }
                                 sleepScore = Math.max(0, Math.min(100, sleepScore));
 
-                                // TSB Score (15%) - v4.8 Linear 72.5-Base
+                                // TSB Score (15%) - Matching Streamlit formula
                                 const tsb = (yesterday?.ctl != null && yesterday?.atl != null) ? yesterday.ctl - yesterday.atl : null;
-                                let tsbScore = 72.5;
+                                let tsbScore = 70.0;
                                 if (tsb != null) {
-                                    tsbScore = 72.5 + tsb;
+                                    if (tsb > -10) {
+                                        tsbScore = 75 + (tsb / 10) * 25;
+                                    } else {
+                                        tsbScore = 50;
+                                    }
                                 }
                                 tsbScore = Math.max(0, Math.min(100, tsbScore));
 
-                                const ier = (0.40 * hrvScore + 0.20 * rhrScore + 0.25 * sleepScore + 0.15 * tsbScore);
+                                // IER with CORRECT weights: HRV 50%, RHR 15%, Sleep 20%, TSB 15%
+                                const ier = (0.50 * hrvScore + 0.15 * rhrScore + 0.20 * sleepScore + 0.15 * tsbScore);
 
                                 // READINESS CALCULATION (Python "Points" logic)
                                 // 1. Calculate Baselines (Recovery Baseline for RHR)

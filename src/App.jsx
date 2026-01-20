@@ -59,6 +59,7 @@ function App() {
   const [searchResults, setSearchResults] = useState([]);
   const [loading, setLoading] = useState(false);
   const [entryDate, setEntryDate] = useState(new Date().toISOString().slice(0, 10)); // YYYY-MM-DD
+  const [foodToEdit, setFoodToEdit] = useState(null); // Coordinate editing from other tabs
 
   // Initialize Firebase auth
   useEffect(() => {
@@ -165,7 +166,7 @@ function App() {
       id,
       dateStr: new Date(entryDate).toLocaleDateString(), // Legacy format
       dateISO: entryDate,
-      timeBlock: getTimeBlock(), // Uses current time for block, but correct date
+      timeBlock: food.timeBlock || getTimeBlock(), // Respect provided block or use current
       timestamp: serverTimestamp(),
     };
     try {
@@ -503,11 +504,10 @@ function App() {
 
   const tabs = [
     { id: 'entrada', label: 'Entrada', icon: Icons.PlusCircle },
-    { id: 'mis_alimentos', label: 'Catálogo', icon: Icons.Wheat }, // Moved here and renamed
     { id: 'diario', label: 'Diario', icon: Icons.Book },
     { id: 'salud', label: 'Salud', icon: Icons.Activity },
     { id: 'historial', label: 'Historial', icon: Icons.History },
-    { id: 'coach', label: 'Entrenador', icon: Icons.Bike }, // Renamed
+    { id: 'coach', label: 'Entrenador', icon: Icons.Bike },
   ];
 
   const dbRef = useRef(db);
@@ -529,6 +529,12 @@ function App() {
             deleteLog={deleteLog}
             entryDate={entryDate}
             setEntryDate={setEntryDate}
+            myFoods={myFoods}
+            allLogs={logs}
+            onSaveFood={saveToMyFoods}
+            onDeleteFood={deleteMyFood}
+            foodToEdit={foodToEdit}
+            onClearFoodToEdit={() => setFoodToEdit(null)}
           />
         </SafeView>;
       case 'diario':
@@ -537,10 +543,7 @@ function App() {
           onSaveFood={saveToMyFoods} myFoods={myFoods} manualDayType={manualDayType} onSaveManualDayType={saveManualDayType} /></SafeView>;
       case 'salud':
         return <SafeView><SaludView allLogs={logs} dayLogs={todayLogs} tssToday={0} dinnerFeedback={dinnerFeedback} onSaveFeedback={saveDinnerFeedback} manualDayType={manualDayType} onSaveManualDayType={saveManualDayType} /></SafeView>;
-      case 'mis_alimentos':
-        return <SafeView><MyFoodsView
-          myFoods={myFoods} onSave={saveToMyFoods} onDelete={deleteMyFood}
-          onAddToLog={(f) => addLog(f)} /></SafeView>;
+      // Removed standalone Catalog view
       case 'historial':
         return <SafeView><HistoryView
           logs={logs} onExport={exportData} onImport={importData}
@@ -548,7 +551,27 @@ function App() {
       case 'coach':
         return <SafeView><CoachHub logs={logs} useFirebase={!!db} dbRef={dbRef} appId={APP_ID} /></SafeView>;
       default:
-        return <SafeView><EntryView today={todayLogs} loading={loading} query={query} setQuery={setQuery} searchFoods={searchFoods} searchResults={searchResults} addLog={addLog} deleteLog={deleteLog} firebaseError={firebaseError} myFoods={myFoods} allLogs={logs} /></SafeView>;
+        return <SafeView>
+          <EntryView
+            today={selectedDayLogs}
+            loading={loading}
+            searchFoods={searchFoods}
+            addLog={addLog}
+            query={query}
+            setQuery={setQuery}
+            searchResults={searchResults}
+            firebaseError={firebaseError}
+            deleteLog={deleteLog}
+            entryDate={entryDate}
+            setEntryDate={setEntryDate}
+            myFoods={myFoods}
+            allLogs={logs}
+            onSaveFood={saveToMyFoods}
+            onDeleteFood={deleteMyFood}
+            foodToEdit={foodToEdit}
+            onClearFoodToEdit={() => setFoodToEdit(null)}
+          />
+        </SafeView>;
     }
   };
 

@@ -151,7 +151,8 @@ export const getSymptomEmoji = (tag) => {
         'hrv_bajo': '📉',
         'fa': '⚡',
         'bien': '💤',
-        'reflujo': '🔥'
+        'reflujo': '🔥',
+        'estres': '😰'
     };
     return emojiMap[tag] || '•';
 };
@@ -166,7 +167,8 @@ export const getSymptomLabel = (tag) => {
         'hrv_bajo': 'HRV Bajo',
         'fa': 'FA',
         'bien': 'Bien',
-        'reflujo': 'Reflujo'
+        'reflujo': 'Reflujo',
+        'estres': 'Estrés'
     };
     return labelMap[tag] || tag;
 };

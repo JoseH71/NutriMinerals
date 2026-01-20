@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import * as Icons from 'lucide-react';
 
-const MyFoodsView = ({ myFoods, onSave, onDelete, onUse, onAddToLog }) => {
+const MyFoodsView = ({ myFoods, onSave, onDelete, onUse, onAddToLog, onClose }) => {
     const [search, setSearch] = useState('');
     const [showForm, setShowForm] = useState(false);
     const [editFood, setEditFood] = useState(null);
@@ -118,7 +118,12 @@ const MyFoodsView = ({ myFoods, onSave, onDelete, onUse, onAddToLog }) => {
 
     return (
         <div className="space-y-4 animate-fade-in px-2">
-            <div className="bg-gradient-to-br from-teal-600 to-emerald-700 p-6 rounded-[2rem] text-white shadow-xl">
+            <div className="bg-gradient-to-br from-teal-600 to-emerald-700 p-6 rounded-[2rem] text-white shadow-xl relative">
+                {onClose && (
+                    <button onClick={onClose} className="absolute top-6 right-6 p-2 bg-white/20 rounded-full hover:bg-white/30 transition-all active:scale-90">
+                        <Icons.ArrowLeft size={20} />
+                    </button>
+                )}
                 <h2 className="text-2xl font-black mb-1 flex items-center gap-2">🍎 <span className="tracking-tighter uppercase">Mis Alimentos</span></h2>
                 <p className="text-teal-100 text-[10px] font-bold uppercase tracking-widest opacity-80">Tu catálogo personal verificado</p>
                 <p className="text-teal-200 text-xs mt-3 font-bold bg-white/10 w-fit px-3 py-1 rounded-full">{myFoods.length} alimentos guardados</p>

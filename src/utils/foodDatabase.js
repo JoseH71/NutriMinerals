@@ -88,13 +88,39 @@ export const FOOD_DATABASE = {
     'cafe': { portion: '100ml', calories: 2, protein: 0, carbs: 0, fat: 0, fiber: 0, na: 2, k: 49, ca: 2, mg: 6 }
 };
 
-// Function to search local database
+// Function to access custom foods from localStorage
+export const getCustomFoods = () => {
+    try {
+        const stored = localStorage.getItem('customFoods');
+        return stored ? JSON.parse(stored) : {};
+    } catch { return {}; }
+};
+
+export const addCustomFood = (name, data) => {
+    try {
+        const foods = getCustomFoods();
+        // Normalize key
+        const key = name.toLowerCase().trim();
+        foods[key] = { ...data, isCustom: true };
+        localStorage.setItem('customFoods', JSON.stringify(foods));
+        return true;
+    } catch (e) {
+        console.error('Error saving custom food:', e);
+        return false;
+    }
+};
+
+// Function to search local database (including custom foods)
 export const searchLocalDB = (query) => {
     const q = query.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-    for (const [key, value] of Object.entries(FOOD_DATABASE)) {
+
+    // Combine static DB with custom foods
+    const allFoods = { ...FOOD_DATABASE, ...getCustomFoods() };
+
+    for (const [key, value] of Object.entries(allFoods)) {
         const k = key.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
         if (q.includes(k) || k.includes(q)) {
-            return { name: key, ...value, confidence: 'alta (base local)' };
+            return { name: key, ...value, confidence: value.isCustom ? 'personalizado' : 'alta (base local)' };
         }
     }
     return null;
