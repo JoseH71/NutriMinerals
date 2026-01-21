@@ -3,15 +3,16 @@ import * as Icons from 'lucide-react';
 import MyFoodsView from '../Common/MyFoodsView';
 
 // Helper to get unique sorted suggestions from history and today
-const getSuggestions = (today = [], myFoods = [], allLogs = []) => {
+// Helper to get unique suggestions from multiple sources
+const getSuggestions = (today = [], myFoods = [], allLogs = [], searchHistory = []) => {
     const uniqueNames = new Set();
-    // 1. Add logs from today first
-    (today || []).forEach(l => l.name && uniqueNames.add(l.name.trim()));
-    // 2. Add "My Foods" (Favorites)
+    // Order matters for priority if we don't sort alphabetically
+    searchHistory.forEach(h => h && uniqueNames.add(h.trim()));
     (myFoods || []).forEach(f => f.name && uniqueNames.add(f.name.trim()));
-    // 3. Add History
+    (today || []).forEach(l => l.name && uniqueNames.add(l.name.trim()));
     (allLogs || []).forEach(l => l.name && uniqueNames.add(l.name.trim()));
-    return Array.from(uniqueNames).sort();
+
+    return Array.from(uniqueNames);
 };
 
 const EntryView = ({ today, loading, searchFoods, addLog, query, setQuery, searchResults, firebaseError, deleteLog, entryDate, setEntryDate, myFoods, allLogs, onSaveFood, foodToEdit, onClearFoodToEdit, onDeleteFood }) => {
@@ -25,7 +26,30 @@ const EntryView = ({ today, loading, searchFoods, addLog, query, setQuery, searc
     const [quantity, setQuantity] = useState(1);
     const [baseValues, setBaseValues] = useState(null);
 
-    const suggestions = useMemo(() => getSuggestions(today, myFoods, allLogs), [today, myFoods, allLogs]);
+    const [searchHistory, setSearchHistory] = useState(() => {
+        try {
+            return JSON.parse(localStorage.getItem('searchHistory') || '[]');
+        } catch (e) {
+            return [];
+        }
+    });
+
+    const [showSuggestions, setShowSuggestions] = useState(false);
+
+    const suggestions = useMemo(() =>
+        getSuggestions(today, myFoods, allLogs, searchHistory),
+        [today, myFoods, allLogs, searchHistory]
+    );
+
+    const filteredSuggestions = useMemo(() => {
+        if (!query.trim()) return searchHistory.slice(0, 6);
+        const q = query.toLowerCase();
+        return suggestions
+            .filter(s => s.toLowerCase().includes(q))
+            .filter(s => s.toLowerCase() !== q)
+            .slice(0, 10);
+    }, [suggestions, query, searchHistory]);
+
     const isToday = entryDate === new Date().toISOString().slice(0, 10);
 
     // Auto-set timeblock based on hour
@@ -80,10 +104,27 @@ const EntryView = ({ today, loading, searchFoods, addLog, query, setQuery, searc
         setForm(prev => ({ ...prev, na: baseNa + add }));
     };
 
+    const handleSearch = (q = query) => {
+        if (!q.trim()) return;
+
+        // Update search history
+        const newHistory = [
+            q.trim(),
+            ...searchHistory.filter(h => h.toLowerCase() !== q.trim().toLowerCase())
+        ].slice(0, 30);
+
+        setSearchHistory(newHistory);
+        localStorage.setItem('searchHistory', JSON.stringify(newHistory));
+        setShowSuggestions(false);
+
+        searchFoods(q);
+    };
+
     const clearAll = () => {
         setSelectedFood(null);
         setQuery('');
         searchFoods('');
+        setShowSuggestions(false);
     };
 
     const handleSave = (e) => {
@@ -279,16 +320,62 @@ const EntryView = ({ today, loading, searchFoods, addLog, query, setQuery, searc
                             <input
                                 type="text"
                                 value={query}
-                                onChange={(e) => setQuery(e.target.value)}
-                                onKeyDown={(e) => e.key === 'Enter' && searchFoods(query)}
+                                onFocus={() => setShowSuggestions(true)}
+                                onChange={(e) => {
+                                    setQuery(e.target.value);
+                                    setShowSuggestions(true);
+                                }}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter') handleSearch(query);
+                                    if (e.key === 'Escape') setShowSuggestions(false);
+                                }}
                                 placeholder="¿Qué has comido?"
                                 className="w-full p-6 pl-16 pr-16 rounded-[2.5rem] bg-card border border-theme text-xl font-bold shadow-sm focus:ring-4 focus:ring-indigo-500/5 outline-none transition-all placeholder:text-slate-300"
-                                list="food-suggestions"
+                                autoComplete="off"
                             />
-                            <datalist id="food-suggestions">
-                                {suggestions.map((name, i) => <option key={i} value={name} />)}
-                            </datalist>
-                            <button onClick={() => searchFoods(query)} className="absolute right-3 top-1/2 -translate-y-1/2 p-4 bg-indigo-600 text-white rounded-full shadow-lg shadow-indigo-500/40 transform active:scale-90 transition-all">
+
+                            {/* Autocomplete Suggestions */}
+                            {showSuggestions && filteredSuggestions.length > 0 && (
+                                <div className="absolute top-full left-0 right-0 mt-3 bg-card border border-theme rounded-[2rem] shadow-2xl z-[60] overflow-hidden animate-slide-up">
+                                    <div className="p-3 border-b border-theme bg-card-alt/50 flex justify-between items-center">
+                                        <p className="text-[10px] font-black text-secondary uppercase tracking-[0.2em] px-3">Sugerencias Recientes</p>
+                                        <button
+                                            onClick={() => setShowSuggestions(false)}
+                                            className="p-1 hover:bg-theme rounded-full text-secondary"
+                                        >
+                                            <Icons.X size={14} />
+                                        </button>
+                                    </div>
+                                    <div className="max-h-[300px] overflow-y-auto custom-scrollbar">
+                                        {filteredSuggestions.map((suggestion, i) => (
+                                            <button
+                                                key={i}
+                                                onClick={() => {
+                                                    setQuery(suggestion);
+                                                    handleSearch(suggestion);
+                                                }}
+                                                className="w-full px-6 py-4 text-left hover:bg-indigo-50 dark:hover:bg-indigo-900/20 flex items-center justify-between group transition-colors border-b border-theme/50 last:border-0"
+                                            >
+                                                <div className="flex items-center gap-4">
+                                                    <Icons.History size={16} className="text-secondary opacity-40 group-hover:text-indigo-500" />
+                                                    <span className="font-bold text-primary group-hover:text-indigo-600 transition-colors">{suggestion}</span>
+                                                </div>
+                                                <Icons.ArrowUpLeft size={16} className="text-secondary opacity-40 -rotate-90 group-hover:text-indigo-500" />
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Overlay to close suggestions */}
+                            {showSuggestions && (
+                                <div
+                                    className="fixed inset-0 z-[50]"
+                                    onClick={() => setShowSuggestions(false)}
+                                />
+                            )}
+
+                            <button onClick={() => handleSearch(query)} className="absolute right-3 top-1/2 -translate-y-1/2 p-4 bg-indigo-600 text-white rounded-full shadow-lg shadow-indigo-500/40 transform active:scale-90 transition-all z-[65]">
                                 {loading ? <Icons.Loader2 className="animate-spin" size={24} /> : <Icons.ArrowRight size={24} />}
                             </button>
                         </div>

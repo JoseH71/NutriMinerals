@@ -29,13 +29,91 @@ const SaludView = ({ dayLogs = [], allLogs = [], tssToday = 0, dinnerFeedback = 
 
     // State for Dinner History Modal
     const [showDinnerHistory, setShowDinnerHistory] = useState(false);
+    const [showBioTimeline, setShowBioTimeline] = useState(false);
+    const [bioTrendRange, setBioTrendRange] = useState(7);
     const [historyDateFilter, setHistoryDateFilter] = useState('all'); // 'all', '7d', '30d', '90d'
     const [historySymptomFilter, setHistorySymptomFilter] = useState('all'); // 'all', 'gases', 'pulso_alto', etc.
 
-    // State for mineral display mode (true = %, false = mg)
     const [mineralDisplayMode, setMineralDisplayMode] = useState({});
 
     const [expandedNutrient, setExpandedNutrient] = useState(null);
+
+    // Get yesterday's date
+    const yesterday = useMemo(() => {
+        const d = new Date();
+        d.setDate(d.getDate() - 1);
+        return d;
+    }, []);
+    const yesterdayISO = useMemo(() => yesterday.toISOString().split('T')[0], [yesterday]);
+
+    // Symptom tags available
+    const symptomTags = [
+        { id: 'gases', emoji: '💨', label: 'Gases' },
+        { id: 'pulso_alto', emoji: '❤️', label: 'Pulso↑' },
+        { id: 'hrv_bajo', emoji: '📉', label: 'HRV↓' },
+        { id: 'fa', emoji: '⚡', label: 'FA' },
+        { id: 'reflujo', emoji: '🔥', label: 'Reflujo' },
+        { id: 'estres', emoji: '😰', label: 'Estrés' },
+        { id: 'bien', emoji: '💤', label: 'Bien' }
+    ];
+
+    const toggleSymptom = (symptomId) => {
+        setSelectedSymptoms(prev => {
+            let newSymptoms;
+            if (symptomId === 'bien') {
+                newSymptoms = prev.includes('bien') ? [] : ['bien'];
+            } else {
+                const filtered = prev.filter(s => s !== 'bien');
+                if (filtered.includes(symptomId)) {
+                    newSymptoms = filtered.filter(s => s !== symptomId);
+                } else {
+                    newSymptoms = [...filtered, symptomId];
+                }
+            }
+
+            // Save to Firestore if available
+            if (onSaveFeedback) {
+                onSaveFeedback(yesterdayISO, newSymptoms);
+            }
+
+            // Also save to localStorage as backup
+            try {
+                const feedbackKey = `dinner_feedback_${yesterdayISO}`;
+                const feedback = {
+                    date: yesterdayISO,
+                    symptoms: newSymptoms,
+                    timestamp: new Date().toISOString()
+                };
+                localStorage.setItem(feedbackKey, JSON.stringify(feedback));
+            } catch (e) {
+                console.error('[SYMPTOM] Error saving to localStorage:', e);
+            }
+
+            return newSymptoms;
+        });
+    };
+
+    // Load saved feedback from Firestore or localStorage
+    useEffect(() => {
+        // First check Firestore (dinnerFeedback prop)
+        const firestoreFeedback = dinnerFeedback.find(f => f.dateISO === yesterdayISO || f.id === yesterdayISO);
+        if (firestoreFeedback && firestoreFeedback.symptoms) {
+            setSelectedSymptoms(firestoreFeedback.symptoms);
+            return;
+        }
+
+        // Fallback to localStorage
+        try {
+            const feedbackKey = `dinner_feedback_${yesterdayISO}`;
+            const saved = localStorage.getItem(feedbackKey);
+            if (saved) {
+                const feedback = JSON.parse(saved);
+                setSelectedSymptoms(feedback.symptoms || []);
+            }
+        } catch (e) {
+            console.error('Error loading feedback:', e);
+        }
+    }, [yesterdayISO, dinnerFeedback]);
 
     // Use prop manualDayType (synced from Firestore) with localStorage fallback
     const [localManualDayType, setLocalManualDayType] = useState(() => {
@@ -151,6 +229,16 @@ const SaludView = ({ dayLogs = [], allLogs = [], tssToday = 0, dinnerFeedback = 
         return { color: 'rose', emoji: '🔴', label: 'Baja' };
     };
     const mineralDensityStatus = getMineralDensityStatus(mineralDensity);
+
+    // Calculate historical calories for timeline
+    const historyCalories = useMemo(() => {
+        const map = {};
+        intervalsData.slice(0, 10).forEach(day => {
+            const dayLogs = allCleanLogs.filter(l => (l.dateISO || l.dateStr) === day.id);
+            map[day.id] = dayLogs.reduce((acc, l) => acc + (Number(l.calories) || 0), 0);
+        });
+        return map;
+    }, [allCleanLogs, intervalsData]);
 
     // Digestive load with time factor
     const nightLogs = cleanLogs.filter(l => l.timeBlock === 'noche');
@@ -521,12 +609,22 @@ const SaludView = ({ dayLogs = [], allLogs = [], tssToday = 0, dinnerFeedback = 
                 const digestiveLoadValue = calcDinnerLoad(yesterdayLogs);
 
                 // Get yesterday's wellness data
-                const todayWellness = intervalsData.find(d => d.id === new Date().toISOString().split('T')[0]);
                 const yesterdayWellness = intervalsData.find(d => d.id === yesterdayISO);
+                const todayWellness = intervalsData.find(d => d.id === new Date().toISOString().split('T')[0]);
 
                 // Calculate deltas
                 const hrvDelta = todayWellness?.hrv ? getHRVDelta(todayWellness.hrv, intervalsData) : null;
                 const rhrDelta = todayWellness?.restingHR ? getRHRDelta(todayWellness.restingHR, intervalsData) : null;
+
+                // NEW: Calculate yesterday's total calories and deficit
+                const yesterdayTotalLogs = allCleanLogs.filter(l => (l.dateISO || l.dateStr) === yesterdayISO);
+                const yesterdayTotalCalories = yesterdayTotalLogs.reduce((acc, l) => acc + (Number(l.calories) || 0), 0);
+
+                // Yesterday's target ref (simplified or fetched)
+                const isTrainingYesterday = yesterdayWellness?.training_load > 60 || yesterdayTotalLogs.some(l => l.name?.toLowerCase().includes('entreno') || l.tss > 0);
+                const yesterdayTarget = isTrainingYesterday ? 2450 : 2050;
+                const isCalorieDeficit = yesterdayTotalCalories < (yesterdayTarget - 300);
+                const hrvIsDown = hrvDelta !== null && hrvDelta < -5;
 
                 // Get verdict
                 const hasFATag = selectedSymptoms.includes('fa');
@@ -551,63 +649,6 @@ const SaludView = ({ dayLogs = [], allLogs = [], tssToday = 0, dinnerFeedback = 
                 ];
 
 
-                const toggleSymptom = (symptomId) => {
-                    setSelectedSymptoms(prev => {
-                        let newSymptoms;
-                        if (symptomId === 'bien') {
-                            newSymptoms = prev.includes('bien') ? [] : ['bien'];
-                        } else {
-                            const filtered = prev.filter(s => s !== 'bien');
-                            if (filtered.includes(symptomId)) {
-                                newSymptoms = filtered.filter(s => s !== symptomId);
-                            } else {
-                                newSymptoms = [...filtered, symptomId];
-                            }
-                        }
-
-                        // Save to Firestore if available
-                        if (onSaveFeedback) {
-                            onSaveFeedback(yesterdayISO, newSymptoms);
-                        }
-
-                        // Also save to localStorage as backup
-                        try {
-                            const feedbackKey = `dinner_feedback_${yesterdayISO}`;
-                            const feedback = {
-                                date: yesterdayISO,
-                                symptoms: newSymptoms,
-                                timestamp: new Date().toISOString()
-                            };
-                            localStorage.setItem(feedbackKey, JSON.stringify(feedback));
-                        } catch (e) {
-                            console.error('[SYMPTOM] Error saving to localStorage:', e);
-                        }
-
-                        return newSymptoms;
-                    });
-                };
-
-                // Load saved feedback from Firestore or localStorage
-                React.useEffect(() => {
-                    // First check Firestore (dinnerFeedback prop)
-                    const firestoreFeedback = dinnerFeedback.find(f => f.dateISO === yesterdayISO || f.id === yesterdayISO);
-                    if (firestoreFeedback && firestoreFeedback.symptoms) {
-                        setSelectedSymptoms(firestoreFeedback.symptoms);
-                        return;
-                    }
-
-                    // Fallback to localStorage
-                    try {
-                        const feedbackKey = `dinner_feedback_${yesterdayISO}`;
-                        const saved = localStorage.getItem(feedbackKey);
-                        if (saved) {
-                            const feedback = JSON.parse(saved);
-                            setSelectedSymptoms(feedback.symptoms || []);
-                        }
-                    } catch (e) {
-                        console.error('Error loading feedback:', e);
-                    }
-                }, [yesterdayISO, dinnerFeedback]);
 
 
 
@@ -621,14 +662,22 @@ const SaludView = ({ dayLogs = [], allLogs = [], tssToday = 0, dinnerFeedback = 
                                     {config.emoji} {config.label}
                                 </p>
                             </div>
-                            <div className="text-right flex flex-col items-end gap-1">
+                            <div className="text-right flex flex-col items-end gap-2">
                                 <p className="text-lg font-bold text-white">{yesterday.toLocaleDateString('es-ES', { weekday: 'short', day: '2-digit', month: 'short' })}</p>
-                                <button
-                                    onClick={() => setShowDinnerHistory(true)}
-                                    className="px-3 py-1.5 rounded-full text-sm font-bold bg-emerald-600 text-white hover:bg-emerald-700 transition-all active:scale-95 flex items-center gap-1"
-                                >
-                                    🍽️ Historial
-                                </button>
+                                <div className="flex gap-2">
+                                    <button
+                                        onClick={() => setShowBioTimeline(true)}
+                                        className="px-3 py-1.5 rounded-full text-sm font-bold bg-indigo-600 text-white hover:bg-indigo-700 transition-all active:scale-95 flex items-center gap-1 shadow-lg border border-indigo-400/30"
+                                    >
+                                        📉 Tendencias
+                                    </button>
+                                    <button
+                                        onClick={() => setShowDinnerHistory(true)}
+                                        className="px-3 py-1.5 rounded-full text-sm font-bold bg-emerald-600 text-white hover:bg-emerald-700 transition-all active:scale-95 flex items-center gap-1 shadow-lg border border-emerald-400/30"
+                                    >
+                                        🍽️ Historial
+                                    </button>
+                                </div>
                             </div>
                         </div>
 
@@ -752,6 +801,26 @@ const SaludView = ({ dayLogs = [], allLogs = [], tssToday = 0, dinnerFeedback = 
                             </div>
                         </div>
 
+                        {/* RECOVERY INSIGHT (New: Calorie/HRV Correlation) */}
+                        {hrvIsDown && isCalorieDeficit && (
+                            <div className="mb-4 p-4 bg-indigo-500/10 border border-indigo-500/30 rounded-2xl flex items-start gap-3 animate-pulse-subtle">
+                                <span className="text-2xl mt-1">💡</span>
+                                <div className="flex-1">
+                                    <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">Insight de Recuperación</p>
+                                    <p className="text-sm text-secondary leading-tight mt-1">
+                                        Tu HRV ha bajado un <span className="text-rose-500 font-bold">{Math.abs(hrvDelta)}%</span> hoy.
+                                        Ayer consumiste <span className="text-rose-500 font-bold">{Math.round(yesterdayTotalCalories)} kcal</span>,
+                                        quedándote <span className="font-bold text-amber-500">{(yesterdayTarget - yesterdayTotalCalories).toFixed(0)} kcal por debajo</span> de tu objetivo.
+                                        Esta falta de energía suele ser la causa principal de una mala recuperación del sistema vagal.
+                                    </p>
+                                    <div className="mt-2 flex items-center justify-between">
+                                        <p className="text-[10px] text-indigo-400 font-bold italic">🎯 Objetivo hoy: {thresholds.calories.optHigh} kcal</p>
+                                        <span className="text-[10px] bg-indigo-500/20 text-indigo-300 px-2 py-0.5 rounded-lg border border-indigo-500/30">Déficit detectado</span>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
                         {/* Detailed Breakdown (Expandable) */}
                         <details className="mb-3">
                             <summary className="cursor-pointer text-[9px] font-black text-secondary uppercase tracking-wider mb-2 hover:text-primary transition-colors">📊 Desglose Detallado</summary>
@@ -841,73 +910,7 @@ const SaludView = ({ dayLogs = [], allLogs = [], tssToday = 0, dinnerFeedback = 
                             </div>
                         )}
 
-                        {/* 7-Day Biofeedback Timeline (Punto 6) */}
-                        {intervalsData.length > 0 && (
-                            <div className="mt-4 pt-4 border-t border-gray-300 dark:border-gray-700">
-                                <p className="text-sm font-black text-secondary uppercase tracking-wider mb-3">Últimos 7 días</p>
-                                <div className="space-y-2">
-                                    {/* HRV Mini Chart */}
-                                    <div className="flex items-end justify-between h-16 gap-1">
-                                        {intervalsData.slice(0, 7).reverse().map((day, i) => {
-                                            const maxHRV = Math.max(...intervalsData.slice(0, 7).map(d => d.hrv || 0));
-                                            const height = day.hrv ? (day.hrv / maxHRV) * 100 : 0;
-                                            const isToday = day.id === new Date().toISOString().split('T')[0];
-
-                                            return (
-                                                <div key={day.id} className="flex-1 flex flex-col items-center gap-1">
-                                                    <div
-                                                        className={`w-full rounded-t transition-all ${isToday ? 'bg-indigo-600' : 'bg-gray-400 dark:bg-gray-600'}`}
-                                                        style={{ height: `${height}%` }}
-                                                        title={`${day.hrv || '-'} ms`}
-                                                    />
-                                                    <span className="text-[10px] text-secondary font-mono">{day.hrv || '-'}</span>
-                                                </div>
-                                            );
-                                        })}
-                                    </div>
-
-                                    {/* Symptom Icons Row */}
-                                    <div className="flex justify-between gap-1">
-                                        {intervalsData.slice(0, 7).reverse().map((day) => {
-                                            try {
-                                                // First check Firestore (dinnerFeedback prop)
-                                                const firestoreFeedback = dinnerFeedback.find(f => f.dateISO === day.id || f.id === day.id);
-                                                let symptoms = [];
-
-                                                if (firestoreFeedback && firestoreFeedback.symptoms) {
-                                                    symptoms = firestoreFeedback.symptoms;
-                                                } else {
-                                                    // Fallback to localStorage
-                                                    const feedbackKey = `dinner_feedback_${day.id}`;
-                                                    const saved = localStorage.getItem(feedbackKey);
-                                                    symptoms = saved ? JSON.parse(saved).symptoms || [] : [];
-                                                }
-
-                                                return (
-                                                    <div key={day.id} className="flex-1 text-center">
-                                                        <div className="text-xs">
-                                                            {symptoms.length > 0 ? symptoms.map(s => getSymptomEmoji(s)).join('') : '·'}
-                                                        </div>
-                                                        <div className="text-[9px] text-secondary mt-0.5">
-                                                            {new Date(day.id).toLocaleDateString('es-ES', { day: '2-digit', month: 'numeric' }).replace('/', '/')}
-                                                        </div>
-                                                    </div>
-                                                );
-                                            } catch (e) {
-                                                return (
-                                                    <div key={day.id} className="flex-1 text-center">
-                                                        <div className="text-xs">·</div>
-                                                        <div className="text-[9px] text-secondary mt-0.5">
-                                                            {new Date(day.id).toLocaleDateString('es-ES', { day: '2-digit', month: 'numeric' }).replace('/', '/')}
-                                                        </div>
-                                                    </div>
-                                                );
-                                            }
-                                        })}
-                                    </div>
-                                </div>
-                            </div>
-                        )}
+                        {/* Detailed Breakdown (Expandable) moved or kept */}
                     </div>
                 );
             })()}
@@ -1040,7 +1043,7 @@ const SaludView = ({ dayLogs = [], allLogs = [], tssToday = 0, dinnerFeedback = 
                                         <p className="text-sm">con los filtros seleccionados</p>
                                     </div>
                                 ) : (
-                                    finalEntries.map((entry, idx) => (
+                                    finalEntries.map((entry) => (
                                         <div
                                             key={entry.date}
                                             className={`p-4 rounded-2xl border border-theme bg-card-alt/30 space-y-2 ${entry.symptoms.includes('fa') ? 'border-l-4 border-l-rose-500' :
@@ -1092,6 +1095,155 @@ const SaludView = ({ dayLogs = [], allLogs = [], tssToday = 0, dinnerFeedback = 
                     </div>
                 );
             })()}
+
+
+            {/* BIO-TOLERANCIA TRENDS MODAL */}
+            {showBioTimeline && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-xl animate-fade-in">
+                    <div className="bg-card w-full max-w-xl rounded-3xl border border-theme shadow-2xl flex flex-col overflow-hidden max-h-[90vh]">
+                        <div className="p-6 border-b border-theme flex flex-col gap-4 bg-gradient-to-r from-indigo-600 to-indigo-800">
+                            <div className="flex justify-between items-center">
+                                <div>
+                                    <h3 className="text-2xl font-black text-white italic tracking-tighter uppercase">
+                                        📉 Tendencias
+                                    </h3>
+                                    <p className="text-xs text-indigo-100 font-bold uppercase tracking-widest opacity-80">Recuperación Bio-Feedback</p>
+                                </div>
+                                <button
+                                    onClick={() => setShowBioTimeline(false)}
+                                    className="p-2.5 rounded-full bg-white/20 hover:bg-white/30 text-white transition-all active:scale-95 shadow-inner"
+                                >
+                                    <Icons.X size={24} />
+                                </button>
+                            </div>
+
+                            {/* Range Selector */}
+                            <div className="flex bg-white/10 rounded-xl p-1 self-start border border-white/10">
+                                {[7, 14, 30].map(range => (
+                                    <button
+                                        key={range}
+                                        onClick={() => setBioTrendRange(range)}
+                                        className={`px-4 py-1.5 rounded-lg text-xs font-black transition-all ${bioTrendRange === range ? 'bg-white text-indigo-600 shadow-lg scale-105' : 'text-white/70 hover:text-white'}`}
+                                    >
+                                        {range}D
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+
+                        <div className="p-8 space-y-10 overflow-y-auto custom-scrollbar">
+                            {/* HRV Chart Section */}
+                            <div className="space-y-6">
+                                <div className="flex justify-between items-center">
+                                    <h4 className="text-sm font-black text-secondary uppercase tracking-[0.2em]">Variabilidad (HRV)</h4>
+                                    <div className="flex items-center gap-2">
+                                        <span className="w-3 h-3 bg-indigo-500 rounded-sm"></span>
+                                        <span className="text-xs font-bold text-primary">ms</span>
+                                    </div>
+                                </div>
+                                <div className="flex items-end justify-between h-48 gap-2 px-2 overflow-x-auto custom-scrollbar pb-2 min-w-max">
+                                    {intervalsData.slice(0, bioTrendRange).reverse().map((day) => {
+                                        const hrvValues = intervalsData.filter(d => d.hrv).map(d => d.hrv);
+                                        const maxHRV = hrvValues.length > 0 ? Math.max(...hrvValues) : 100;
+                                        const height = day.hrv ? (day.hrv / maxHRV) * 100 : 0;
+                                        const isToday = day.id === new Date().toISOString().split('T')[0];
+
+                                        return (
+                                            <div key={day.id} className="flex flex-col items-center gap-4 group" style={{ width: bioTrendRange > 14 ? '40px' : '50px' }}>
+                                                <div
+                                                    className={`w-full rounded-t-2xl transition-all duration-1000 ease-out shadow-[0_0_20px_rgba(0,0,0,0.1)] ${isToday ? 'bg-indigo-500 shadow-indigo-500/30' : 'bg-slate-400 dark:bg-slate-600'}`}
+                                                    style={{ height: `${Math.max(15, height)}%` }}
+                                                />
+                                                <div className="text-center">
+                                                    <p className={`text-[11px] font-black ${isToday ? 'text-indigo-400' : 'text-primary'}`}>
+                                                        {day.hrv || '-'}
+                                                    </p>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+
+                            {/* Calories Row Section */}
+                            <div className="space-y-6 pt-6 border-t border-theme/50">
+                                <div className="flex justify-between items-center">
+                                    <h4 className="text-sm font-black text-secondary uppercase tracking-[0.2em]">Energía (Calorías)</h4>
+                                </div>
+                                <div className="flex justify-between gap-2 px-2 overflow-x-auto custom-scrollbar pb-2 min-w-max">
+                                    {intervalsData.slice(0, bioTrendRange).reverse().map((day) => {
+                                        const cals = historyCalories[day.id] || 0;
+                                        const isLow = cals > 0 && cals < 1900;
+                                        return (
+                                            <div key={day.id} className="flex flex-col items-center gap-3" style={{ width: bioTrendRange > 14 ? '40px' : '50px' }}>
+                                                <div className={`text-[12px] font-black ${isLow ? 'text-rose-500 anim-pulse' : 'text-primary opacity-80'}`}>
+                                                    {cals > 0 ? `${(cals / 1000).toFixed(1)}k` : '-'}
+                                                </div>
+                                                <div className={`mx-auto transition-all ${isLow ? 'w-2.5 h-2.5 bg-rose-500 rounded-full ring-2 ring-rose-500/20' : 'w-1.5 h-1.5 bg-theme/50 rounded-full'}`}></div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+
+                            {/* Symptoms & Dates Section */}
+                            <div className="space-y-6 pt-6 border-t border-theme/50 pb-2">
+                                <h4 className="text-sm font-black text-secondary uppercase tracking-[0.2em]">Bio-Sensaciones</h4>
+                                <div className="flex justify-between gap-2 px-2 overflow-x-auto custom-scrollbar pb-2 min-w-max">
+                                    {intervalsData.slice(0, bioTrendRange).reverse().map((day) => {
+                                        // Try to get symptoms from Firestore first, then fallback to localStorage
+                                        const firestoreFeedback = dinnerFeedback.find(f => f.dateISO === day.id || f.id === day.id);
+                                        let symptoms = firestoreFeedback?.symptoms || [];
+
+                                        if (symptoms.length === 0) {
+                                            try {
+                                                const feedbackKey = `dinner_feedback_${day.id}`;
+                                                const saved = localStorage.getItem(feedbackKey);
+                                                if (saved) {
+                                                    symptoms = JSON.parse(saved).symptoms || [];
+                                                }
+                                            } catch (e) {
+                                                console.error('Error loading fallback symptoms:', e);
+                                            }
+                                        }
+
+                                        return (
+                                            <div key={day.id} className="flex flex-col items-center gap-4" style={{ width: bioTrendRange > 14 ? '40px' : '50px' }}>
+                                                <div className="h-16 flex flex-wrap justify-center content-center gap-1">
+                                                    {symptoms.length > 0 ? (
+                                                        symptoms.slice(0, 6).map((s, idx) => (
+                                                            <span key={idx} className="text-xl leading-none">{getSymptomEmoji(s)}</span>
+                                                        ))
+                                                    ) : (
+                                                        <span className="text-secondary opacity-20 text-xs">·</span>
+                                                    )}
+                                                </div>
+                                                <div className="text-center w-full">
+                                                    <p className="text-[9px] font-black text-secondary uppercase opacity-50">
+                                                        {new Date(day.id).toLocaleDateString('es-ES', { weekday: 'short' }).slice(0, 1)}
+                                                    </p>
+                                                    <p className={`text-[11px] font-black ${bioTrendRange > 14 ? 'text-secondary' : 'text-primary'}`}>
+                                                        {new Date(day.id).getDate()}
+                                                    </p>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="p-6 bg-card-alt border-t border-theme text-center">
+                            <div className="inline-flex items-start gap-4 text-left bg-indigo-500/10 p-4 rounded-2xl border border-indigo-500/20">
+                                <span className="text-2xl">💡</span>
+                                <p className="text-xs font-bold text-secondary leading-relaxed">
+                                    <span className="text-indigo-400 uppercase font-black">Análisis:</span> Si ves una caída en las barras de <span className="text-indigo-400">HRV</span> coincidiendo con un punto <span className="text-rose-500">rojo</span> de calorías, indica que tu sistema nervioso está estresado por falta de energía.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* BIO-TOLERANCIA NOCTURNA (Food Tolerance Analysis) */}
             {(() => {
@@ -1151,7 +1303,25 @@ const SaludView = ({ dayLogs = [], allLogs = [], tssToday = 0, dinnerFeedback = 
                 );
             })()}
 
+            {/* SUGERENCIAS PARA ESTA NOCHE */}
+            {(() => {
+                const suggestions = getDinnerSuggestions(allCleanLogs, dinnerFeedback, intervalsData, isTrainingDay);
+                if (!suggestions.hasData && suggestions.tips.length === 0) return null;
 
+                return (
+                    <div className="bg-card p-5 rounded-3xl border border-theme mb-4 border-l-4 border-l-blue-500">
+                        <p className="text-base font-black text-secondary uppercase tracking-widest mb-3">🌙 Sugerencias para esta noche</p>
+                        <div className="space-y-2">
+                            {suggestions.tips.map((tip, i) => (
+                                <div key={i} className="flex gap-2 items-center bg-card-alt/50 p-2.5 rounded-xl border border-theme">
+                                    <span className="text-lg">💡</span>
+                                    <p className="text-sm font-medium">{tip}</p>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                );
+            })()}
 
             {/* Omega-3 Tracking Card (moved to end) */}
             {(() => {

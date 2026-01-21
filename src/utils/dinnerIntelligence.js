@@ -251,6 +251,18 @@ export const getDinnerSuggestions = (allLogs, dinnerFeedback, intervalsData, isT
         suggestions.push(`Evitar "${problemFood}" si buscas estabilidad`);
     }
 
+    // Check today's HRV if data is fresh
+    if (intervalsData.length > 0) {
+        const todayISO = new Date().toISOString().split('T')[0];
+        const todayWellness = intervalsData.find(d => d.id === todayISO);
+        const hrvValues = intervalsData.filter(d => d.hrv).map(d => d.hrv);
+        const avgHRV = hrvValues.length > 0 ? hrvValues.reduce((a, b) => a + b, 0) / hrvValues.length : null;
+
+        if (todayWellness?.hrv && avgHRV && todayWellness.hrv < avgHRV * 0.9) {
+            suggestions.push('⚠️ HRV hoy bajo: asegura hoy tus calorías totales para recuperar');
+        }
+    }
+
     return {
         tips: suggestions,
         lastGoodDinner: topDinners.best,
