@@ -6,11 +6,16 @@ import MyFoodsView from '../Common/MyFoodsView';
 // Helper to get unique suggestions from multiple sources
 const getSuggestions = (today = [], myFoods = [], allLogs = [], searchHistory = []) => {
     const uniqueNames = new Set();
-    // Order matters for priority if we don't sort alphabetically
-    searchHistory.forEach(h => h && uniqueNames.add(h.trim()));
-    (myFoods || []).forEach(f => f.name && uniqueNames.add(f.name.trim()));
-    (today || []).forEach(l => l.name && uniqueNames.add(l.name.trim()));
-    (allLogs || []).forEach(l => l.name && uniqueNames.add(l.name.trim()));
+
+    // Static local DB keys for faster discovery
+    const localKeys = ['naranja', 'pera', 'kiwi', 'pavo', 'pollo', 'ternera', 'pan', 'queso', 'leche', 'cafe', 'arroz', 'huevos', 'pasta', 'ensalada', 'atun'];
+    localKeys.forEach(k => uniqueNames.add(k));
+
+    // User's own data
+    searchHistory.forEach(h => h && uniqueNames.add(h.trim().toLowerCase()));
+    (myFoods || []).forEach(f => f.name && uniqueNames.add(f.name.trim().toLowerCase()));
+    (today || []).forEach(l => l.name && uniqueNames.add(l.name.trim().toLowerCase()));
+    (allLogs || []).forEach(l => l.name && uniqueNames.add(l.name.trim().toLowerCase()));
 
     return Array.from(uniqueNames);
 };
@@ -46,7 +51,6 @@ const EntryView = ({ today, loading, searchFoods, addLog, query, setQuery, searc
         const q = query.toLowerCase();
         return suggestions
             .filter(s => s.toLowerCase().includes(q))
-            .filter(s => s.toLowerCase() !== q)
             .slice(0, 10);
     }, [suggestions, query, searchHistory]);
 
@@ -166,120 +170,112 @@ const EntryView = ({ today, loading, searchFoods, addLog, query, setQuery, searc
         <div className="p-4 space-y-6 animate-fade-in pb-20">
             {selectedFood ? (
                 /* EDIT FORM MODAL */
-                <div className="bg-card p-6 rounded-[2.5rem] border border-theme animate-fade-in shadow-2xl relative">
-                    <div className="flex justify-between items-center mb-6">
-                        <h2 className="font-black text-xl text-primary">Detalle del Registro</h2>
-                        <button onClick={clearAll} className="p-2 bg-slate-100 dark:bg-slate-800 rounded-full text-secondary hover:text-rose-500 transition-colors">
-                            <Icons.X />
+                <div className="bg-card p-5 rounded-[2.5rem] border border-theme animate-fade-in shadow-2xl relative max-w-md mx-auto">
+                    <div className="flex justify-between items-center mb-4">
+                        <h2 className="font-black text-lg text-primary">Detalle</h2>
+                        <button onClick={clearAll} className="p-1.5 bg-slate-100 dark:bg-slate-800 rounded-full text-secondary hover:text-rose-500 transition-colors">
+                            <Icons.X size={20} />
                         </button>
                     </div>
 
-                    <form onSubmit={handleSave} className="space-y-6">
-                        <div className="flex gap-4">
-                            <div className="relative flex-1">
-                                <input
-                                    className="w-full text-2xl font-black bg-transparent outline-none placeholder-gray-300 dark:placeholder-gray-700 text-primary border-b-2 border-transparent focus:border-indigo-500 transition-all pb-2"
-                                    placeholder="Nombre del alimento..."
-                                    value={form.name}
-                                    onChange={e => setForm({ ...form, name: e.target.value })}
-                                    required
-                                />
-                                <Icons.Edit className="absolute right-0 top-1 text-gray-300 w-5 h-5 pointer-events-none" />
-                            </div>
+                    <form onSubmit={handleSave} className="space-y-4">
+                        <div className="relative">
+                            <input
+                                className="w-full text-xl font-black bg-transparent outline-none placeholder-gray-300 dark:placeholder-gray-700 text-primary border-b border-theme focus:border-indigo-500 transition-all pb-1"
+                                placeholder="Nombre..."
+                                value={form.name}
+                                onChange={e => setForm({ ...form, name: e.target.value })}
+                                required
+                            />
                         </div>
 
                         {baseValues && (
-                            <div className="bg-indigo-50 dark:bg-indigo-900/20 p-4 rounded-2xl border border-indigo-200 dark:border-indigo-800">
-                                <label className="text-[10px] font-black text-indigo-600 dark:text-indigo-400 uppercase tracking-widest mb-2 block">Ajustar Cantidad</label>
-                                <div className="flex items-center gap-4">
-                                    <button type="button" onClick={() => updateQuantity(quantity - 0.25)} className="w-12 h-12 bg-white dark:bg-indigo-900 shadow-sm border border-indigo-200 dark:border-indigo-700 rounded-xl font-black text-2xl flex items-center justify-center transition-all active:scale-90 text-indigo-600">−</button>
+                            <div className="bg-indigo-50/50 dark:bg-indigo-900/10 p-3 rounded-2xl border border-indigo-100 dark:border-indigo-800/30">
+                                <div className="flex items-center gap-3">
+                                    <button type="button" onClick={() => updateQuantity(quantity - 0.25)} className="w-9 h-9 bg-white dark:bg-indigo-900 shadow-sm border border-indigo-200 dark:border-indigo-700 rounded-lg font-black text-xl flex items-center justify-center transition-all active:scale-90 text-indigo-600">−</button>
                                     <div className="flex-1 text-center">
-                                        <p className="text-3xl font-black text-indigo-950 dark:text-indigo-50">{quantity}x</p>
-                                        <p className="text-[9px] font-bold text-indigo-400 uppercase">Ración base</p>
+                                        <p className="text-xl font-black text-indigo-950 dark:text-indigo-50 leading-none">{quantity}x</p>
+                                        <p className="text-[8px] font-bold text-indigo-400 uppercase tracking-tighter">Ración</p>
                                     </div>
-                                    <button type="button" onClick={() => updateQuantity(quantity + 0.25)} className="w-12 h-12 bg-white dark:bg-indigo-900 shadow-sm border border-indigo-200 dark:border-indigo-700 rounded-xl font-black text-2xl flex items-center justify-center transition-all active:scale-90 text-indigo-600">+</button>
+                                    <button type="button" onClick={() => updateQuantity(quantity + 0.25)} className="w-9 h-9 bg-white dark:bg-indigo-900 shadow-sm border border-indigo-200 dark:border-indigo-700 rounded-lg font-black text-xl flex items-center justify-center transition-all active:scale-90 text-indigo-600">+</button>
                                 </div>
                             </div>
                         )}
 
-                        <div className="flex bg-card-alt p-1.5 rounded-2xl border border-theme">
+                        <div className="flex bg-card-alt p-1 rounded-xl border border-theme">
                             {['mañana', 'tarde', 'noche'].map(block => (
                                 <button key={block} type="button" onClick={() => setTimeBlock(block)}
-                                    className={`flex-1 py-3 text-xs font-black rounded-xl transition-all capitalize ${timeBlock === block ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/30' : 'text-secondary font-bold'}`}>
-                                    {block === 'mañana' ? '🌅 Mañana' : block === 'tarde' ? '☀️ Tarde' : '🌙 Noche'}
+                                    className={`flex-1 py-1.5 text-[10px] font-black rounded-lg transition-all capitalize ${timeBlock === block ? 'bg-indigo-600 text-white shadow-md' : 'text-secondary opacity-60'}`}>
+                                    {block === 'mañana' ? '🌅' : block === 'tarde' ? '☀️' : '🌙'} {block}
                                 </button>
                             ))}
                         </div>
 
-                        <div className="grid grid-cols-4 gap-2">
-                            <div className="bg-orange-50 dark:bg-orange-900/20 p-3 rounded-2xl flex flex-col items-center border border-orange-100 dark:border-orange-800/30">
-                                <label className="text-[10px] font-black text-orange-600 uppercase">Kcal</label>
-                                <input type="number" className="w-full text-center bg-transparent font-black text-lg outline-none text-orange-700 dark:text-orange-300" value={form.calories} onChange={e => setForm({ ...form, calories: e.target.value })} />
-                            </div>
-                            <div className="bg-blue-50 dark:bg-blue-900/20 p-3 rounded-2xl flex flex-col items-center border border-blue-100 dark:border-blue-800/30">
-                                <label className="text-[10px] font-black text-blue-600 uppercase">Prot</label>
-                                <input type="number" className="w-full text-center bg-transparent font-black text-lg outline-none text-blue-700 dark:text-blue-300" value={form.protein} onChange={e => setForm({ ...form, protein: e.target.value })} />
-                            </div>
-                            <div className="bg-amber-50 dark:bg-amber-900/20 p-3 rounded-2xl flex flex-col items-center border border-amber-100 dark:border-amber-800/30">
-                                <label className="text-[10px] font-black text-amber-600 uppercase">Carb</label>
-                                <input type="number" className="w-full text-center bg-transparent font-black text-lg outline-none text-amber-700 dark:text-amber-300" value={form.carbs} onChange={e => setForm({ ...form, carbs: e.target.value })} />
-                            </div>
-                            <div className="bg-rose-50 dark:bg-rose-900/20 p-3 rounded-2xl flex flex-col items-center border border-rose-100 dark:border-rose-800/30">
-                                <label className="text-[10px] font-black text-rose-600 uppercase">Grasa</label>
-                                <input type="number" className="w-full text-center bg-transparent font-black text-lg outline-none text-rose-700 dark:text-rose-300" value={form.fat} onChange={e => setForm({ ...form, fat: e.target.value })} />
-                            </div>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-3">
-                            <div className="col-span-2 bg-slate-50 dark:bg-slate-800/50 p-4 rounded-3xl border border-theme flex justify-between items-center">
-                                <div>
-                                    <label className="text-[10px] font-black text-primary uppercase flex items-center gap-2">🧂 Sodio (Na) <span className="text-secondary opacity-50">mg</span></label>
-                                    <p className="text-[9px] text-secondary font-bold">Base {Math.round(baseNa)} + Sal {saltLevel === 'none' ? 0 : saltLevel === 'low' ? 200 : saltLevel === 'normal' ? 500 : 900}</p>
+                        <div className="grid grid-cols-4 gap-1.5">
+                            {[
+                                { label: 'Kcal', key: 'calories', color: 'orange' },
+                                { label: 'Prot', key: 'protein', color: 'blue' },
+                                { label: 'Carb', key: 'carbs', color: 'amber' },
+                                { label: 'Fat', key: 'fat', color: 'rose' }
+                            ].map(m => (
+                                <div key={m.key} className={`bg-${m.color}-50/50 dark:bg-${m.color}-900/10 p-2 rounded-xl border border-${m.color}-100/50 dark:border-${m.color}-800/20 text-center`}>
+                                    <label className={`text-[8px] font-black text-${m.color}-600 uppercase block mb-0.5`}>{m.label}</label>
+                                    <input type="number" className={`w-full text-center bg-transparent font-black text-sm outline-none text-${m.color}-700 dark:text-${m.color}-300`} value={form[m.key]} onChange={e => setForm({ ...form, [m.key]: e.target.value })} />
                                 </div>
-                                <input type="number" className="w-24 text-right bg-transparent font-black text-3xl outline-none text-primary" value={Math.round(form.na)} onChange={e => setForm({ ...form, na: Number(e.target.value) })} />
+                            ))}
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2">
+                            <div className="col-span-2 bg-card-alt p-2 rounded-xl border border-theme flex justify-between items-center">
+                                <div>
+                                    <label className="text-[9px] font-black text-primary uppercase flex items-center gap-1.5 italic">🧂 Sodio (Na) <span className="opacity-40 font-bold">mg</span></label>
+                                    <p className="text-[7px] text-secondary font-bold opacity-60">Base {Math.round(baseNa)} + Sal {saltLevel === 'none' ? '0' : saltLevel === 'low' ? '200' : saltLevel === 'normal' ? '500' : '900'}</p>
+                                </div>
+                                <input type="number" className="w-20 text-right bg-transparent font-black text-2xl outline-none text-primary" value={Math.round(form.na)} onChange={e => setForm({ ...form, na: Number(e.target.value) })} />
                             </div>
-                            <div className="bg-card-alt p-3 rounded-2xl border border-theme">
-                                <label className="text-[10px] font-bold text-emerald-600">Potasio (K)</label>
-                                <input type="number" className="w-full bg-transparent font-black text-lg outline-none" value={form.k} onChange={e => setForm({ ...form, k: e.target.value })} />
-                            </div>
-                            <div className="bg-card-alt p-3 rounded-2xl border border-theme">
-                                <label className="text-[10px] font-bold text-rose-600">Calcio (Ca)</label>
-                                <input type="number" className="w-full bg-transparent font-black text-lg outline-none" value={form.ca} onChange={e => setForm({ ...form, ca: e.target.value })} />
-                            </div>
-                            <div className="bg-card-alt p-3 rounded-2xl border border-theme col-span-2">
-                                <label className="text-[10px] font-bold text-violet-600">Magnesio (Mg)</label>
-                                <input type="number" className="w-full bg-transparent font-black text-lg outline-none" value={form.mg} onChange={e => setForm({ ...form, mg: e.target.value })} />
+
+                            <div className="col-span-2 grid grid-cols-3 gap-1.5">
+                                <div className="bg-card-alt p-1.5 rounded-xl border border-theme text-center">
+                                    <label className="text-[7px] font-bold text-emerald-600 uppercase">Potasio</label>
+                                    <input type="number" className="w-full text-center bg-transparent font-black text-xs outline-none" value={form.k} onChange={e => setForm({ ...form, k: e.target.value })} />
+                                </div>
+                                <div className="bg-card-alt p-1.5 rounded-xl border border-theme text-center">
+                                    <label className="text-[7px] font-bold text-rose-600 uppercase">Calcio</label>
+                                    <input type="number" className="w-full text-center bg-transparent font-black text-xs outline-none" value={form.ca} onChange={e => setForm({ ...form, ca: e.target.value })} />
+                                </div>
+                                <div className="bg-card-alt p-1.5 rounded-xl border border-theme text-center">
+                                    <label className="text-[7px] font-bold text-violet-600 uppercase">Magnesio</label>
+                                    <input type="number" className="w-full text-center bg-transparent font-black text-xs outline-none" value={form.mg} onChange={e => setForm({ ...form, mg: e.target.value })} />
+                                </div>
                             </div>
                         </div>
 
-                        <div className="space-y-3">
-                            <h3 className="font-black text-sm text-primary flex items-center gap-2">🧂 Añadir Sal Extra</h3>
-                            <div className="grid grid-cols-4 gap-2">
-                                {[
-                                    { id: 'none', icon: '⬜', label: 'Nada' },
-                                    { id: 'low', icon: '🟡', label: 'Poca' },
-                                    { id: 'normal', icon: '🟢', label: 'Normal' },
-                                    { id: 'high', icon: '🔴', label: 'Alta' }
-                                ].map(s => (
-                                    <button key={s.id} type="button" onClick={() => updateSalt(s.id)}
-                                        className={`p-3 rounded-2xl flex flex-col items-center transition-all ${saltLevel === s.id ? 'bg-indigo-600 text-white shadow-lg transform scale-105' : 'bg-slate-100 dark:bg-slate-800/50 text-slate-400'}`}>
-                                        <span className="text-xl mb-1">{s.icon}</span>
-                                        <span className="text-[8px] font-black uppercase tracking-widest">{s.label}</span>
-                                    </button>
-                                ))}
-                            </div>
+                        <div className="grid grid-cols-4 gap-1.5">
+                            {[
+                                { id: 'none', icon: '⬜', label: '0' },
+                                { id: 'low', icon: '🟡', label: '1' },
+                                { id: 'normal', icon: '🟢', label: '2' },
+                                { id: 'high', icon: '🔴', label: '3' }
+                            ].map(s => (
+                                <button key={s.id} type="button" onClick={() => updateSalt(s.id)}
+                                    className={`py-1.5 rounded-xl flex flex-col items-center border transition-all ${saltLevel === s.id ? 'bg-indigo-600 border-indigo-700 text-white shadow-md' : 'bg-slate-50 dark:bg-slate-800/30 border-theme text-secondary opacity-60'}`}>
+                                    <span className="text-xs">{s.icon}</span>
+                                    <span className="text-[7px] font-black uppercase tracking-widest">{s.id}</span>
+                                </button>
+                            ))}
                         </div>
 
-                        <button type="submit" className="w-full bg-indigo-600 text-white py-5 rounded-[1.5rem] font-black shadow-xl shadow-indigo-500/30 active:scale-95 transition-all text-lg mb-2">
-                            Añadir al Diario ✨
-                        </button>
-
-                        {onSaveFood && (
-                            <button type="button" onClick={() => onSaveFood({ ...form, portion: quantity !== 1 && baseValues ? `${quantity} x ${baseValues.portion || 'ración'}` : (form.portion || '1 ración') })}
-                                className="w-full py-4 border-2 border-dashed border-indigo-200 dark:border-indigo-800 text-indigo-500 font-black rounded-[1.5rem] flex items-center justify-center gap-2 hover:bg-indigo-50 dark:hover:bg-indigo-900/10 transition-colors">
-                                <Icons.Save size={20} /> Guardar como Favorito
+                        <div className="grid grid-cols-2 gap-2 pt-1">
+                            <button type="submit" className="col-span-2 bg-indigo-600 text-white py-3 rounded-2xl font-black shadow-lg shadow-indigo-500/20 active:scale-[0.98] transition-all text-sm uppercase tracking-widest">
+                                Añadir {timeBlock} ✨
                             </button>
-                        )}
+                            {onSaveFood && (
+                                <button type="button" onClick={() => onSaveFood({ ...form, portion: quantity !== 1 && baseValues ? `${quantity} x ${baseValues.portion || 'ración'}` : (form.portion || '1 ración') })}
+                                    className="col-span-2 py-2 border border-dashed border-indigo-200 dark:border-indigo-800/50 text-indigo-400 font-bold rounded-xl flex items-center justify-center gap-2 text-[10px] hover:bg-indigo-50 dark:hover:bg-indigo-900/10 transition-colors uppercase tracking-widest">
+                                    <Icons.Save size={12} /> Guardar
+                                </button>
+                            )}
+                        </div>
                     </form>
                 </div>
             ) : (
@@ -314,8 +310,8 @@ const EntryView = ({ today, loading, searchFoods, addLog, query, setQuery, searc
                     <div className="space-y-6">
                         {/* Search Bar */}
                         <div className="relative group">
-                            <div className="absolute inset-y-0 left-6 flex items-center pointer-events-none">
-                                <Icons.Search className="text-secondary opacity-40 group-focus-within:text-indigo-600 transition-colors" size={24} />
+                            <div className="absolute inset-y-0 left-5 flex items-center pointer-events-none">
+                                <Icons.Search className="text-secondary opacity-40 group-focus-within:text-indigo-600 transition-colors" size={20} />
                             </div>
                             <input
                                 type="text"
@@ -330,7 +326,7 @@ const EntryView = ({ today, loading, searchFoods, addLog, query, setQuery, searc
                                     if (e.key === 'Escape') setShowSuggestions(false);
                                 }}
                                 placeholder="¿Qué has comido?"
-                                className="w-full p-6 pl-16 pr-16 rounded-[2.5rem] bg-card border border-theme text-xl font-bold shadow-sm focus:ring-4 focus:ring-indigo-500/5 outline-none transition-all placeholder:text-slate-300"
+                                className="w-full p-3 pl-12 pr-12 rounded-[1.5rem] bg-card border border-theme text-sm font-bold shadow-sm focus:ring-4 focus:ring-indigo-500/5 outline-none transition-all placeholder:text-slate-300"
                                 autoComplete="off"
                             />
 
@@ -375,7 +371,8 @@ const EntryView = ({ today, loading, searchFoods, addLog, query, setQuery, searc
                                 />
                             )}
 
-                            <button onClick={() => handleSearch(query)} className="absolute right-3 top-1/2 -translate-y-1/2 p-4 bg-indigo-600 text-white rounded-full shadow-lg shadow-indigo-500/40 transform active:scale-90 transition-all z-[65]">
+                            <button onClick={() => handleSearch(query)}
+                                className="absolute right-3 top-1/2 -translate-y-1/2 p-3 bg-indigo-600 text-white rounded-full shadow-lg shadow-indigo-500/40 transform active:scale-90 transition-all z-[65]">
                                 {loading ? <Icons.Loader2 className="animate-spin" size={24} /> : <Icons.ArrowRight size={24} />}
                             </button>
                         </div>
@@ -400,7 +397,7 @@ const EntryView = ({ today, loading, searchFoods, addLog, query, setQuery, searc
                             <button onClick={() => setShowCatalog(true)}
                                 className="w-full p-6 bg-gradient-to-br from-teal-600 via-teal-700 to-emerald-800 text-white rounded-[2rem] flex items-center justify-center gap-4 shadow-xl shadow-teal-500/20 active:scale-95 transition-all group">
                                 <div className="p-3 bg-white/10 rounded-2xl group-hover:scale-110 transition-transform">
-                                    <Icons.Wheat size={36} />
+                                    <Icons.BookOpen size={36} />
                                 </div>
                                 <div className="text-left">
                                     <span className="font-black text-lg block leading-tight">MI CATÁLOGO</span>
@@ -409,6 +406,17 @@ const EntryView = ({ today, loading, searchFoods, addLog, query, setQuery, searc
                             </button>
                         </div>
                     </div>
+
+                    {/* ERROR ALERT */}
+                    {firebaseError && (
+                        <div className="p-4 bg-rose-100 border border-rose-200 text-rose-800 rounded-2xl flex items-center gap-3 animate-pulse">
+                            <Icons.AlertTriangle size={24} />
+                            <div>
+                                <p className="font-bold text-sm">Error de Búsqueda</p>
+                                <p className="text-xs opacity-80">{firebaseError}</p>
+                            </div>
+                        </div>
+                    )}
 
                     {/* Search Results */}
                     {searchResults.length > 0 && (
@@ -419,7 +427,15 @@ const EntryView = ({ today, loading, searchFoods, addLog, query, setQuery, searc
                                     className="w-full p-6 bg-card rounded-[2.5rem] border border-theme text-left flex justify-between items-center shadow-md hover:border-indigo-500 transition-all group active:scale-[0.98]">
                                     <div className="flex-1 pr-4">
                                         <p className="font-black text-base uppercase tracking-tight text-primary group-hover:text-indigo-600 transition-colors">{food.name}</p>
-                                        <p className="text-[11px] font-bold text-secondary uppercase tracking-widest mt-0.5 opacity-70">{food.portion} • {food.confidence}</p>
+                                        <div className="flex items-center gap-2 mt-1">
+                                            <p className="text-[11px] font-bold text-secondary uppercase tracking-widest opacity-70">{food.portion}</p>
+                                            <span className={`text-[8px] px-2 py-0.5 rounded-full font-black uppercase tracking-tighter ${food.confidence === 'alta' ? 'bg-emerald-100 text-emerald-700' :
+                                                food.confidence === 'media' ? 'bg-amber-100 text-amber-700' :
+                                                    'bg-rose-100 text-rose-700'
+                                                }`}>
+                                                {food.confidence || 'estimado'}
+                                            </span>
+                                        </div>
                                     </div>
                                     <div className="text-right">
                                         <p className="text-3xl font-black text-indigo-600 dark:text-indigo-400 tracking-tighter leading-none">{Math.round(food.calories || 0)}</p>
@@ -457,8 +473,9 @@ const EntryView = ({ today, loading, searchFoods, addLog, query, setQuery, searc
                         </div>
                     </div>
                 </>
-            )}
-        </div>
+            )
+            }
+        </div >
     );
 };
 

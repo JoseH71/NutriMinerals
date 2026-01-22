@@ -11,11 +11,11 @@ import { firebaseConfig, APP_ID, SHARED_USER_ID, GEMINI_API_KEY } from './config
 // Shared Components
 import EntryView from './components/Entry/EntryView';
 import DiaryView from './components/Diary/DiaryView';
+import SafeView from './components/Common/SafeView';
+import BioStatusView from './components/Bio/BioStatusView';
 import SaludView from './components/Common/SaludView';
 import HistoryView from './components/History/HistoryView';
 import CoachHub from './components/Coach/CoachHub';
-import MyFoodsView from './components/Common/MyFoodsView';
-import SafeView from './components/Common/SafeView';
 
 import './App.css';
 
@@ -58,6 +58,13 @@ function App() {
   const [query, setQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [loading, setLoading] = useState(false);
+
+  // DEBUG STATE
+  const [debugLog, setDebugLog] = useState([]);
+  const logDebug = (msg) => {
+    console.log(msg);
+    setDebugLog(prev => [msg, ...prev].slice(0, 20));
+  };
   const [entryDate, setEntryDate] = useState(new Date().toISOString().slice(0, 10)); // YYYY-MM-DD
   const [foodToEdit, setFoodToEdit] = useState(null); // Coordinate editing from other tabs
 
@@ -230,19 +237,23 @@ function App() {
     if (!imageFile) {
       if (!q.trim()) { setLoading(false); return; }
 
-      // Fix: "arroz al horno" (3 words) needs to be complex. 
-      // Added 'al', 'del', 'para' and lowered word count threshold to > 2
+      // 1. Determine if it's a complex recipe/phrase or a simple food item
       const isComplex = q.split(' ').length > 2 || / y | con | e | \+ |,| al | del | para /i.test(q);
 
-      if (!isComplex) {
-        // Simple query: check local DB first
+      // FORCE AI FOR NOW to debug user issue ("no encuentra una mierda")
+      // We will only use local search if it is a SUPER simple single word query and EXACT match
+      // This is a temporary aggressive fix to prioritize "intelligence" over speed
+      const forceAI = true;
+
+      if (!forceAI && !isComplex) {
+        // Simple query: check local and personal foods first (fastest)
         const localResult = searchLocalDB(q);
         if (localResult) {
           setSearchResults([localResult]);
           setLoading(false);
           return;
         }
-        // Check MyFoods
+
         const myMatch = myFoods.find(f => f.name?.toLowerCase().includes(q.toLowerCase()));
         if (myMatch) {
           setSearchResults([{ ...myMatch, confidence: 'alta (mis alimentos)' }]);
@@ -250,73 +261,99 @@ function App() {
           return;
         }
       } else {
-        console.log("🧠 Frase compleja detectada, saltando base local para usar IA...");
+        logDebug("🧠 Modo Inteligente Activado: Consultando a Gemini...");
       }
     }
 
     // 2. AI Search (Gemini) with automatic retries
     const performSearch = async (attempt = 1, maxAttempts = 3) => {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s timeout
+      const timeoutId = setTimeout(() => controller.abort(), 20000); // Increased to 20s for image processing
 
       try {
-        const jsonSchema = `{"name":"nombre del alimento en español","portion":"cantidad estimada (ej: 150g, 1 unidad)","calories":N,"protein":N,"carbs":N,"fat":N,"fiber":N,"na":N,"k":N,"ca":N,"mg":N,"confidence":"alta"|"media"|"baja"}`;
+        const jsonSchema = `{
+          "results": [
+            {
+              "name": "nombre descriptivo del alimento",
+              "portion": "cantidad estimada (ej: 150g, 1 unidad)",
+              "calories": N,
+              "protein": N,
+              "carbs": N,
+              "fat": N,
+              "fiber": N,
+              "na": N,
+              "k": N,
+              "ca": N,
+              "mg": N,
+              "confidence": "alta"|"media"|"baja"
+            }
+          ]
+        }`;
 
         let requestBody;
-        let model = 'gemini-2.0-flash'; // Default for text
+        const model = 'gemini-flash-latest';
+        console.log(`🤖 IA Iniciando: ${imageFile ? 'CÁMARA' : 'TEXTO'} - ${q || 'Imagen'}`);
 
         if (imageFile) {
           // --- IMAGE SEARCH ---
-          model = 'gemini-2.5-flash-image';
-
           const reader = new FileReader();
           reader.readAsDataURL(imageFile);
           await new Promise(resolve => reader.onload = resolve);
           const base64Data = reader.result.split(',')[1];
+          const mimeType = imageFile.type || 'image/jpeg';
+          logDebug(`📸 Imagen: ${(base64Data.length / 1024).toFixed(1)} KB`);
 
-          const prompt = `Eres un nutricionista clínico experto. Analiza esta imagen de comida.
-          REGLAS ESTRICTAS:
-          1. Identifica el plato y estima raciones realistas
-          2. Usa valores MEDIOS de bases de datos oficiales (USDA, BEDCA)
-          3. NO inventes minerales. Si duda, pon 0
-          4. Responde SOLO JSON con este esquema: ${jsonSchema}`;
+          const prompt = `Analiza esta fotografía de comida. 
+          TAREAS:
+          1. Identifica cada alimento (ej: si es una naranja, nómbrala; si es un plato de pasta, identifica sus partes).
+          2. Estima la ración visual y calcula valores nutricionales realistas (Calories, Prot, Carbs, Fat, Fiber, Na, K, Ca, Mg).
+          3. IMPORTANTE: Si es una pieza única (1 fruta, 1 huevo, 1 yogur), usa ración "1 unidad".
+          4. RESPONDE EXCLUSIVAMENTE CON EL SIGUIENTE FORMATO JSON (sin texto antes ni después):
+          
+          ${jsonSchema}`;
 
           requestBody = {
             contents: [{
               parts: [
                 { text: prompt },
-                { inline_data: { mime_type: imageFile.type, data: base64Data } }
+                { inline_data: { mime_type: mimeType, data: base64Data } }
               ]
-            }]
+            }],
+            generationConfig: {
+              temperature: 0.1,
+              maxOutputTokens: 8192, // Increased significantly as newer models use more tokens for reasoning
+              response_mime_type: "application/json"
+            },
+            safetySettings: [
+              { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
+              { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
+              { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
+              { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }
+            ]
           };
         } else {
           // --- TEXT SEARCH ---
-          model = 'gemini-2.0-flash';
-          const prompt = `Eres un nutricionista clínico experto.
-          Analiza: "${q}"
-          
-          REGLAS ESTRICTAS:
-          1. Usa valores MEDIOS de bases de datos oficiales (USDA, BEDCA, EFSA)
-          2. NO inventes minerales. Si no estás seguro, devuelve 0
-          3. Asume ración estándar realista (fruta ~150g, carne ~150g, yogur ~125g)
-          4. Valores SIN sal añadida salvo que se indique "con sal" o "restaurante"
-          5. Sé conservador. Mejor subestimar que inventar
-          6. Responde SOLO en español
-          
-          Devuelve SOLO este JSON (sin explicaciones):
-          ${jsonSchema}`;
+          const prompt = `Calcula nutrición para: "${q}"
+          Si hay varios platos, desglósalos. Responde SOLO JSON con esquema: ${jsonSchema}`;
+          logDebug(`🔤 Texto: "${q}"`);
 
           requestBody = {
             contents: [{ parts: [{ text: prompt }] }],
             generationConfig: {
-              temperature: 0.3,
-              topK: 20,
-              topP: 0.8,
-              maxOutputTokens: 512
-            }
+              temperature: 0.1,
+              maxOutputTokens: 8192,
+              response_mime_type: "application/json"
+            },
+            safetySettings: [
+              { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
+              { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
+              { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
+              { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }
+            ]
           };
         }
 
+        logDebug(`🤖 Enviando a Gemini (${model})...`);
         const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -328,117 +365,88 @@ function App() {
 
         if (!res.ok) {
           const err = await res.json().catch(() => ({ error: { message: `HTTP ${res.status}` } }));
-          const msg = err.error?.message || `API Error ${res.status}`;
-
-          // Retry on server errors (5xx) or rate limits (429)
-          if ((res.status >= 500 || res.status === 429) && attempt < maxAttempts) {
-            const delay = res.status === 429 ? 3000 * attempt : 1500 * attempt;
-            console.warn(`Error ${res.status} on ${model}, retrying in ${delay}ms (${attempt}/${maxAttempts})...`);
-            await new Promise(r => setTimeout(r, delay));
-            return performSearch(attempt + 1, maxAttempts);
-          }
-
-          throw new Error(msg);
+          logDebug(`❌ ERROR API: ${err.error?.message || res.status}`);
+          throw new Error(err.error?.message || `Error del servidor (${res.status})`);
         }
 
         const data = await res.json();
-        const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        const finishReason = data.candidates?.[0]?.finishReason;
 
-        if (!text) {
-          throw new Error('Respuesta vacía de la IA');
+        logDebug("✅ Respuesta recibida...");
+
+        if (!rawText) {
+          console.error("Gemini response missing text:", data);
+          throw new Error(`La IA no devolvió texto. Razón: ${finishReason || 'Desconocida'}`);
         }
 
-        // Improved JSON extraction with multiple strategies
-        let parsedFood = null;
-
-        // Strategy 1: Direct JSON parse (if response is pure JSON)
+        // Robust JSON Parsing (Regex cleaning)
+        let parsedData = null;
         try {
-          parsedFood = JSON.parse(text);
-        } catch {
-          // Strategy 2: Extract JSON from markdown code blocks
-          const cleanText = text.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+          // Primero intentamos JSON puro
+          parsedData = JSON.parse(rawText);
+        } catch (e) {
+          // Si falla, buscamos bloques de código o llaves { }
           try {
-            parsedFood = JSON.parse(cleanText);
-          } catch {
-            // Strategy 3: Find JSON object in text
-            const jsonMatch = text.match(/\{[\s\S]*?\}/);
-            if (jsonMatch) {
-              try {
-                parsedFood = JSON.parse(jsonMatch[0]);
-              } catch {
-                // Strategy 4: More aggressive cleanup
-                const aggressive = text.replace(/^[^{]*/, '').replace(/[^}]*$/, '');
-                parsedFood = JSON.parse(aggressive);
-              }
-            }
+            const cleanText = rawText.match(/\{[\s\S]*\}/)?.[0] || rawText;
+            parsedData = JSON.parse(cleanText);
+          } catch (e2) {
+            logDebug("❌ JSON Invalido");
+            console.error("❌ Fallo crítico de parseo JSON:", rawText);
+            throw new Error('No se pudo procesar la respuesta nutricional');
           }
         }
 
-        if (!parsedFood || !parsedFood.name) {
-          // Retry if JSON parsing failed
-          if (attempt < maxAttempts) {
-            console.warn(`Invalid JSON on attempt ${attempt}, retrying...`);
-            await new Promise(r => setTimeout(r, 1000));
-            return performSearch(attempt + 1, maxAttempts);
-          }
-          throw new Error('No se pudo extraer información válida');
+        // Normalize output to array of results
+        let foodList = [];
+        if (parsedData.results && Array.isArray(parsedData.results)) {
+          foodList = parsedData.results;
+        } else if (Array.isArray(parsedData)) {
+          foodList = parsedData;
+        } else if (parsedData.name) {
+          foodList = [parsedData];
         }
+
+        if (foodList.length === 0) throw new Error('No se encontraron alimentos en la respuesta');
 
         const p = (v) => Math.max(0, Number(v) || 0);
-
-        const finalFood = {
-          name: parsedFood.name || 'Alimento desconocido',
-          portion: parsedFood.portion || '100g',
-          calories: p(parsedFood.calories),
-          protein: p(parsedFood.protein),
-          carbs: p(parsedFood.carbs),
-          fat: p(parsedFood.fat),
-          fiber: p(parsedFood.fiber),
-          na: p(parsedFood.na),
-          k: p(parsedFood.k),
-          ca: p(parsedFood.ca),
-          mg: p(parsedFood.mg),
-          confidence: parsedFood.confidence || (imageFile ? 'media' : 'estimado'),
+        const finalResults = foodList.map(f => ({
+          name: f.name || 'Alimento desconocido',
+          portion: f.portion || '1 ración',
+          calories: p(f.calories),
+          protein: p(f.protein),
+          carbs: p(f.carbs),
+          fat: p(f.fat),
+          fiber: p(f.fiber),
+          na: p(f.na),
+          k: p(f.k),
+          ca: p(f.ca),
+          mg: p(f.mg),
+          confidence: f.confidence || (imageFile ? 'media' : 'estimado'),
           dataSource: 'gemini'
-        };
+        }));
 
-        setSearchResults([finalFood]);
-        setFirebaseError(null); // Clear any previous errors on success
+        setSearchResults(finalResults);
+        setFirebaseError(null);
+        logDebug("✨ ÉXITO: Datos listos");
 
       } catch (e) {
         clearTimeout(timeoutId);
         console.error(`Search error (attempt ${attempt}/${maxAttempts}):`, e);
+        logDebug(`⚠️ Error (intento ${attempt}): ${e.message}`);
 
-        // Retry on network errors or parsing failures
-        if (attempt < maxAttempts && (
-          e.name === 'AbortError' ||
-          e.message.includes('Failed to fetch') ||
-          e.message.includes('NetworkError') ||
-          e.message.includes('extraer información')
-        )) {
-          console.warn(`Retrying due to ${e.message}...`);
+        if (attempt < maxAttempts && (e.name === 'AbortError' || e.message.includes('fetch'))) {
           await new Promise(r => setTimeout(r, 2000 * attempt));
           return performSearch(attempt + 1, maxAttempts);
         }
 
-        // Final error handling
-        if (e.name === 'AbortError') {
-          setFirebaseError("Búsqueda cancelada por timeout. Intenta de nuevo.");
-        } else if (e.message.includes('429') || e.message.includes('quota')) {
-          setFirebaseError("Servidor saturado. Espera unos segundos.");
-        } else if (e.message.includes('404') || e.message.includes('not found')) {
-          setFirebaseError("Modelo IA no disponible.");
-        } else {
-          setFirebaseError(`Error: ${e.message}`);
-        }
-
+        setFirebaseError(e.name === 'AbortError' ? "Tiempo de espera agotado. Intenta de nuevo." : `Error: ${e.message}`);
         setSearchResults([]);
       } finally {
         setLoading(false);
       }
     };
 
-    // Execute the search
     performSearch();
   };
 
@@ -505,7 +513,8 @@ function App() {
   const tabs = [
     { id: 'entrada', label: 'Entrada', icon: Icons.PlusCircle },
     { id: 'diario', label: 'Diario', icon: Icons.Book },
-    { id: 'salud', label: 'Salud', icon: Icons.Activity },
+    { id: 'bio', label: 'Bio', icon: Icons.Activity },
+    { id: 'salud', label: 'Salud', icon: Icons.Heart },
     { id: 'historial', label: 'Historial', icon: Icons.History },
     { id: 'coach', label: 'Entrenador', icon: Icons.Bike },
   ];
@@ -514,6 +523,7 @@ function App() {
   useEffect(() => { dbRef.current = db; }, [db]);
 
   const renderView = () => {
+    console.log("Rendering active tab:", activeTab); // Debugging
     switch (activeTab) {
       case 'entrada':
         return <SafeView>
@@ -541,6 +551,8 @@ function App() {
         return <SafeView><DiaryView
           logs={logs} onDelete={deleteLog} thresholds={HEALTH_THRESHOLDS} tssToday={0}
           onSaveFood={saveToMyFoods} myFoods={myFoods} manualDayType={manualDayType} onSaveManualDayType={saveManualDayType} /></SafeView>;
+      case 'bio':
+        return <SafeView><BioStatusView logs={logs} /></SafeView>;
       case 'salud':
         return <SafeView><SaludView allLogs={logs} dayLogs={todayLogs} tssToday={0} dinnerFeedback={dinnerFeedback} onSaveFeedback={saveDinnerFeedback} manualDayType={manualDayType} onSaveManualDayType={saveManualDayType} /></SafeView>;
       // Removed standalone Catalog view
@@ -584,7 +596,7 @@ function App() {
           <Icons.Loader2 className="w-16 h-16 animate-spin text-indigo-600 relative z-10" />
         </div>
         <p className="text-2xl font-black mt-8 tracking-tighter uppercase italic text-primary">Sincronizando Sistema</p>
-        <p className="text-secondary text-xs font-bold uppercase tracking-widest mt-2 opacity-50">Nutriminerals Pro v2.0</p>
+        <p className="text-secondary text-[10px] font-bold uppercase tracking-widest mt-2 opacity-50">Nutriminerals Pro v2.2 (Cámara Fix)</p>
       </div>
     );
   }
@@ -595,7 +607,7 @@ function App() {
         <h1 className="text-xl font-black tracking-tighter uppercase italic flex items-center gap-2">
           <span className="bg-white text-indigo-700 px-1.5 rounded-lg not-italic">N</span>
           Nutriminerals
-          <span className="text-[8px] opacity-50 ml-2 font-mono bg-indigo-800/50 px-1 py-0.5 rounded">v2.1</span>
+          <span className="text-[8px] opacity-100 ml-2 font-black tracking-widest bg-yellow-400 text-black px-1.5 py-0.5 rounded shadow-sm">v2.4.4</span>
         </h1>
         <div className="flex items-center gap-3">
           <button onClick={toggleFullScreen} className="p-2.5 rounded-xl bg-white/10 hover:bg-white/20 transition-all active:scale-95 text-white">
@@ -613,26 +625,45 @@ function App() {
         </div>
       </main>
 
-      <nav className="fixed bottom-0 inset-x-0 bg-card border-t border-theme pb-safe shadow-[0_-10px_40px_rgba(0,0,0,0.1)] z-50">
-        <div className="flex justify-around items-center h-16 max-w-xl mx-auto px-2">
-          {tabs.map(tab => {
+      {/* Success/Status Toast Notification */}
+      {debugLog.length > 0 && debugLog[0].includes('ÉXITO') && (
+        <div className="fixed bottom-20 left-1/2 transform -translate-x-1/2 bg-indigo-600 text-white px-6 py-3 rounded-full shadow-2xl flex items-center gap-3 z-[100] animate-bounce-in">
+          <Icons.Sparkles size={20} className="text-yellow-300 animate-pulse" />
+          <span className="font-bold text-sm tracking-wide">¡Alimento Detectado!</span>
+        </div>
+      )}
+
+      {/* Main Navigation Bar */}
+      <nav className="fixed bottom-0 left-0 right-0 bg-white/90 dark:bg-slate-900/90 backdrop-blur-lg border-t border-theme pb-safe z-50">
+        <div className="flex justify-around items-center h-16 px-1">
+          {tabs.map((tab) => {
             const Icon = tab.icon;
             const isActive = activeTab === tab.id;
             return (
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`flex flex-col items-center justify-center flex-1 py-1 transition-all relative active:scale-95 ${isActive ? 'text-indigo-600' : 'text-secondary hover:text-primary'}`}
+                className={`flex flex-col items-center justify-center w-full h-full space-y-1 transition-all duration-300 relative ${isActive ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-400'
+                  }`}
               >
-                {isActive && <span className="absolute -top-0.5 w-8 h-1 bg-indigo-600 rounded-full"></span>}
-                <Icon size={isActive ? 24 : 20} className={isActive ? 'mb-0.5' : ''} />
-                <span className={`text-[8px] font-black uppercase tracking-widest mt-1 ${isActive ? 'opacity-100' : 'opacity-40'}`}>{tab.label}</span>
+                {isActive && (
+                  <span className="absolute -top-[1px] w-8 h-1 bg-indigo-600 rounded-b-full shadow-[0_2px_10px_rgba(79,70,229,0.5)] animate-width-expand" />
+                )}
+                <Icon
+                  size={isActive ? 24 : 20}
+                  strokeWidth={isActive ? 2.5 : 2}
+                  className={`transition-all duration-300 ${isActive ? 'transform scale-110 drop-shadow-md' : 'opacity-70 group-hover:opacity-100'}`}
+                />
+                <span className={`text-[9px] font-bold tracking-wide transition-all duration-300 ${isActive ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2 hidden'
+                  }`}>
+                  {tab.label}
+                </span>
               </button>
             );
           })}
         </div>
       </nav>
-    </div >
+    </div>
   );
 }
 

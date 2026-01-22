@@ -2,6 +2,8 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import * as Icons from 'lucide-react';
 import FoodDetail from '../Common/FoodDetail';
 import NutrientSummary from '../Common/NutrientSummary';
+import HistoryAnalysisView from './HistoryAnalysisView';
+import { fetchIntervalsData } from '../../utils/intervalsData';
 import { ATHLETE_ID, INTERVALS_API_KEY, SHARED_USER_ID } from '../../config/firebase';
 
 const HistoryView = ({ logs, onExport, onImport, user, onSaveFood, myFoods }) => {
@@ -12,6 +14,7 @@ const HistoryView = ({ logs, onExport, onImport, user, onSaveFood, myFoods }) =>
     const [intervalsLoading, setIntervalsLoading] = useState(false);
     const [intervalsError, setIntervalsError] = useState(null);
     const [expandedItem, setExpandedItem] = useState(null);
+    const [showAnalysis, setShowAnalysis] = useState(false);
     const [dateFrom, setDateFrom] = useState(() => {
         const d = new Date();
         d.setDate(d.getDate() - 30); // Load last 30 days by default
@@ -250,6 +253,7 @@ const HistoryView = ({ logs, onExport, onImport, user, onSaveFood, myFoods }) =>
             <div className="flex justify-between items-center px-1 mb-2">
                 <h2 className="text-2xl font-black tracking-tighter uppercase">Historial</h2>
                 <div className="flex gap-2">
+                    <button onClick={() => setShowAnalysis(true)} className="p-3 bg-card border border-theme rounded-2xl text-amber-500 shadow-sm active:scale-95 transition-all"><Icons.BarChart2 size={20} /></button>
                     <button onClick={() => importRef.current.click()} className="p-3 bg-card border border-theme rounded-2xl text-emerald-600 shadow-sm active:scale-95 transition-all"><Icons.Upload size={20} /></button>
                     <button onClick={onExport} className="p-3 bg-card border border-theme rounded-2xl text-indigo-600 shadow-sm active:scale-95 transition-all"><Icons.Download size={20} /></button>
                 </div>
@@ -1028,6 +1032,14 @@ const HistoryView = ({ logs, onExport, onImport, user, onSaveFood, myFoods }) =>
                         </div>
                     )}
                 </div>
+            )}
+
+            {showAnalysis && (
+                <HistoryAnalysisView
+                    logs={logs}
+                    intervalsData={intervalsData}
+                    onClose={() => setShowAnalysis(false)}
+                />
             )}
         </div>
     );

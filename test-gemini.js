@@ -1,5 +1,5 @@
 
-const apiKey = "AIzaSyCnjQ0E5QjoIfaJCJX1p0l3rv4CoWnf01o";
+const apiKey = "AIzaSyC1LMcHohVa0cCuoFVRVnKavPFGSXmGCUM";
 
 async function listModels() {
     console.log("Listing models...");

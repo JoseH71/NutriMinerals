@@ -43,6 +43,9 @@ export const FOOD_DATABASE = {
     // 🍎 FRUTA (porción estándar)
     'platano': { portion: '120g (1 unidad)', calories: 107, protein: 1, carbs: 27, fat: 0, fiber: 3, na: 1, k: 422, ca: 6, mg: 32 },
     'manzana': { portion: '180g (1 unidad)', calories: 94, protein: 0, carbs: 25, fat: 0, fiber: 4, na: 2, k: 195, ca: 11, mg: 9 },
+    'naranja': { portion: '150g (1 unidad)', calories: 62, protein: 1, carbs: 15, fat: 0, fiber: 3, na: 0, k: 237, ca: 60, mg: 15 },
+    'pera': { portion: '160g (1 unidad)', calories: 91, protein: 1, carbs: 24, fat: 0, fiber: 5, na: 2, k: 186, ca: 14, mg: 11 },
+    'kiwi': { portion: '75g (1 unidad)', calories: 46, protein: 1, carbs: 11, fat: 0, fiber: 2, na: 2, k: 234, ca: 25, mg: 13 },
     'mandarina': { portion: '100g (2 unidades)', calories: 53, protein: 1, carbs: 13, fat: 0, fiber: 2, na: 2, k: 166, ca: 37, mg: 12 },
     'arandanos': { portion: '100g', calories: 57, protein: 1, carbs: 14, fat: 0, fiber: 2, na: 1, k: 77, ca: 6, mg: 6 },
     'frambuesas': { portion: '100g', calories: 52, protein: 1, carbs: 12, fat: 1, fiber: 7, na: 1, k: 151, ca: 25, mg: 22 },
@@ -112,15 +115,28 @@ export const addCustomFood = (name, data) => {
 
 // Function to search local database (including custom foods)
 export const searchLocalDB = (query) => {
-    const q = query.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    const q = query.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+    if (!q) return null;
 
     // Combine static DB with custom foods
     const allFoods = { ...FOOD_DATABASE, ...getCustomFoods() };
 
     for (const [key, value] of Object.entries(allFoods)) {
         const k = key.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-        if (q.includes(k) || k.includes(q)) {
+
+        // 1. Database item contains query (e.g. q="pata" matches k="patata") -> OK
+        if (k.includes(q)) {
             return { name: key, ...value, confidence: value.isCustom ? 'personalizado' : 'alta (base local)' };
+        }
+
+        // 2. Query contains Database item (e.g. q="patata cocida" matches k="patata")
+        // CRITICAL FIX: Only if q is not much longer than k, otherwise it's a complex phrase
+        if (q.includes(k)) {
+            const lengthDiff = q.length - k.length;
+            // Allow only small suffixes (e.g. plural "s", "as") or very short extra words
+            if (lengthDiff < 4) {
+                return { name: key, ...value, confidence: value.isCustom ? 'personalizado' : 'alta (base local)' };
+            }
         }
     }
     return null;
