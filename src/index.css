@@ -9,4 +9,5 @@ body,
   padding: 0;
   width: 100%;
   height: 100%;
+  overscroll-behavior-y: contain; /* Prevents pull-to-refresh reload */
 }

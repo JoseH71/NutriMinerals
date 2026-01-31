@@ -1,43 +1,53 @@
-const CACHE_NAME = 'nutriminerals-cache-v2';
+const CACHE_NAME = 'nutriminerals-cache-v10';
 const ASSETS_TO_CACHE = [
     '/',
     '/index.html',
-    '/manifest.json',
-    '/icon-192.png',
-    '/icon-512.png'
+    '/manifest.json'
 ];
 
 self.addEventListener('install', (event) => {
-    event.waitUntil(
-        caches.open(CACHE_NAME).then((cache) => {
-            console.log('Opened cache');
-            return cache.addAll(ASSETS_TO_CACHE);
-        })
-    );
     self.skipWaiting();
 });
 
 self.addEventListener('activate', (event) => {
     event.waitUntil(
-        caches.keys().then((cacheNames) => {
-            return Promise.all(
-                cacheNames.map((cacheName) => {
-                    if (cacheName !== CACHE_NAME) {
-                        return caches.delete(cacheName);
-                    }
-                })
-            );
-        })
+        Promise.all([
+            self.clients.claim(),
+            caches.keys().then((cacheNames) => {
+                return Promise.all(
+                    cacheNames.map((cacheName) => {
+                        if (cacheName !== CACHE_NAME) {
+                            return caches.delete(cacheName);
+                        }
+                    })
+                );
+            })
+        ])
     );
-    self.clients.claim();
 });
 
 self.addEventListener('fetch', (event) => {
+    const isProxyRequest = event.request.url.includes('proxy') ||
+        event.request.url.includes('intervals') ||
+        event.request.url.includes('fetch') ||
+        event.request.url.includes('googleapis');
+
+    // Bypass cache for API/Proxy requests
+    if (isProxyRequest) {
+        event.respondWith(fetch(event.request).catch(() => caches.match(event.request)));
+        return;
+    }
+
+    // Network First Strategy for other assets
     event.respondWith(
-        caches.match(event.request).then((response) => {
-            return response || fetch(event.request).catch(() => {
-                return caches.match('/index.html');
-            });
-        })
+        fetch(event.request)
+            .then((response) => {
+                return response;
+            })
+            .catch(() => {
+                return caches.match(event.request).then((cachedResponse) => {
+                    return cachedResponse || (event.request.mode === 'navigate' ? caches.match('/index.html') : null);
+                });
+            })
     );
 });

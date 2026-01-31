@@ -24,7 +24,7 @@ export const analyzeDinnerFoodTolerance = (allLogs, dinnerFeedback, intervalsDat
     });
 
     if (dinnerLogs.length === 0) {
-        return { wellTolerated: [], toWatch: [], hasData: false };
+        return { wellTolerated: [], toWatch: [], hasData: false, allFoods: [] };
     }
 
     // Calculate average HRV from intervals data
@@ -44,7 +44,20 @@ export const analyzeDinnerFoodTolerance = (allLogs, dinnerFeedback, intervalsDat
     });
 
     // For each dinner date, determine if it was a "stable" or "difficult" night
-    const foodScores = {}; // { foodName: { stable: N, difficult: N, total: N } }
+    const foodScores = {}; // { foodName: { stable: N, difficult: N, total: N, symptoms: {}, timeline: [], category: '' } }
+
+    // Food categorization helper
+    const categorizeFood = (name) => {
+        const lowerName = name.toLowerCase();
+        if (/pollo|pavo|ternera|cerdo|cordero|carne|filete|pechuga/i.test(lowerName)) return 'Proteínas';
+        if (/pescado|salmon|merluza|atun|sardina|bacalao|lubina|dorada/i.test(lowerName)) return 'Pescados';
+        if (/arroz|pasta|pan|patata|boniato|quinoa|avena/i.test(lowerName)) return 'Carbohidratos';
+        if (/ensalada|lechuga|tomate|pepino|zanahoria|brocoli|espinaca|verdura|calabacin/i.test(lowerName)) return 'Verduras';
+        if (/huevo|tortilla/i.test(lowerName)) return 'Huevos';
+        if (/yogur|queso|leche/i.test(lowerName)) return 'Lácteos';
+        if (/legumbre|lenteja|garbanzo|alubia/i.test(lowerName)) return 'Legumbres';
+        return 'Otros';
+    };
 
     Object.entries(dinnersByDate).forEach(([dinnerDate, logs]) => {
         // Get the NEXT day's date (when you wake up and feel the effects)
@@ -74,8 +87,10 @@ export const analyzeDinnerFoodTolerance = (allLogs, dinnerFeedback, intervalsDat
 
         // Determine if night was stable
         let wasStable = null;
+        let symptomsArray = [];
 
         if (feedback?.symptoms) {
+            symptomsArray = feedback.symptoms;
             // If we have symptom feedback
             if (feedback.symptoms.includes('bien')) {
                 wasStable = true;
@@ -104,14 +119,37 @@ export const analyzeDinnerFoodTolerance = (allLogs, dinnerFeedback, intervalsDat
             if (!name) return;
 
             if (!foodScores[name]) {
-                foodScores[name] = { stable: 0, difficult: 0, total: 0, displayName: log.name };
+                foodScores[name] = {
+                    stable: 0,
+                    difficult: 0,
+                    total: 0,
+                    displayName: log.name,
+                    symptoms: {}, // Track which symptoms occurred
+                    timeline: [], // Track occurrences over time
+                    category: categorizeFood(log.name)
+                };
             }
 
             foodScores[name].total++;
+
+            // Add timeline entry
+            foodScores[name].timeline.push({
+                date: dinnerDate,
+                wasStable,
+                symptoms: symptomsArray,
+                hrv: nextDayWellness?.hrv || null
+            });
+
             if (wasStable) {
                 foodScores[name].stable++;
             } else {
                 foodScores[name].difficult++;
+                // Track specific symptoms
+                symptomsArray.forEach(symptom => {
+                    if (symptom !== 'bien') {
+                        foodScores[name].symptoms[symptom] = (foodScores[name].symptoms[symptom] || 0) + 1;
+                    }
+                });
             }
         });
     });
@@ -125,23 +163,39 @@ export const analyzeDinnerFoodTolerance = (allLogs, dinnerFeedback, intervalsDat
             difficultRatio: data.difficult / data.total,
             total: data.total,
             stable: data.stable,
-            difficult: data.difficult
+            difficult: data.difficult,
+            symptoms: data.symptoms,
+            timeline: data.timeline,
+            category: data.category,
+            // Get most common symptom
+            topSymptom: Object.entries(data.symptoms).length > 0
+                ? Object.entries(data.symptoms).sort((a, b) => b[1] - a[1])[0]
+                : null
         }));
 
     // Sort and get top foods
     const wellTolerated = foodAnalysis
         .filter(f => f.stableRatio >= 0.6) // At least 60% stable nights
-        .sort((a, b) => b.stableRatio - a.stableRatio || b.total - a.total)
-        .slice(0, 5);
+        .sort((a, b) => b.stableRatio - a.stableRatio || b.total - a.total);
 
     const toWatch = foodAnalysis
         .filter(f => f.difficultRatio >= 0.5) // At least 50% difficult nights
-        .sort((a, b) => b.difficultRatio - a.difficultRatio || b.total - a.total)
-        .slice(0, 5);
+        .sort((a, b) => b.difficultRatio - a.difficultRatio || b.total - a.total);
+
+    // Group all foods by category
+    const foodsByCategory = {};
+    foodAnalysis.forEach(food => {
+        if (!foodsByCategory[food.category]) {
+            foodsByCategory[food.category] = [];
+        }
+        foodsByCategory[food.category].push(food);
+    });
 
     return {
         wellTolerated,
         toWatch,
+        allFoods: foodAnalysis.sort((a, b) => b.total - a.total), // All foods sorted by frequency
+        foodsByCategory,
         hasData: foodAnalysis.length > 0,
         totalDinners: Object.keys(dinnersByDate).length
     };

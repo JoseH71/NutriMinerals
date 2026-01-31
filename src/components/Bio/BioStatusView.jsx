@@ -12,8 +12,9 @@ const BioStatusView = ({ logs = [] }) => {
     const bioState = useMemo(() => {
         if (!rawMetrics) return null;
 
-        const last7Days = rawMetrics.slice(-7);
-        const last3Days = rawMetrics.slice(-3);
+        const sortedMetrics = [...rawMetrics].sort((a, b) => (a.date || a.id).localeCompare(b.date || b.id));
+        const last7Days = sortedMetrics.slice(-7);
+        const last3Days = sortedMetrics.slice(-3);
         const yesterdayDate = new Date(Date.now() - 86400000).toISOString().split('T')[0];
         const yesterdayLogs = logs.filter(l => l.dateISO === yesterdayDate);
         const yesterdayCals = yesterdayLogs.reduce((sum, l) => sum + (Number(l.calories) || 0), 0);
@@ -108,14 +109,14 @@ const BioStatusView = ({ logs = [] }) => {
 
             <BioGraph data={bioState.graphData} />
 
-            <h2 className="text-[10px] font-black text-secondary uppercase tracking-[0.2em] px-2 opacity-60 mt-8">Pilares Fundamentales</h2>
+            <h2 className="text-[12px] font-black text-secondary uppercase tracking-[0.2em] px-2 opacity-60 mt-8">Pilares Fundamentales</h2>
             <BioPillars pillars={bioState.pillars} />
 
-            <div className="bg-indigo-50/50 dark:bg-indigo-900/20 p-4 rounded-3xl border border-indigo-100 dark:border-indigo-800/30 flex gap-4 items-center mt-8">
-                <div className="p-2.5 bg-white dark:bg-indigo-950 rounded-full shadow-sm text-indigo-500 min-w-[38px] flex items-center justify-center">
-                    <Icons.Lightbulb size={18} />
+            <div className="bg-indigo-50/50 dark:bg-indigo-900/20 p-5 rounded-[2rem] border border-indigo-100 dark:border-indigo-800/30 flex gap-4 items-center mt-8">
+                <div className="p-3 bg-white dark:bg-indigo-950 rounded-full shadow-sm text-indigo-500 min-w-[44px] flex items-center justify-center">
+                    <Icons.Lightbulb size={22} />
                 </div>
-                <p className="text-xs font-medium text-indigo-900 dark:text-indigo-100 leading-snug opacity-80">
+                <p className="text-[15px] font-bold text-indigo-900 dark:text-indigo-100 leading-snug">
                     {bioState.insight}
                 </p>
             </div>

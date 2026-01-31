@@ -6,7 +6,7 @@ import { Icons } from './components/Icons';
 import { searchLocalDB } from './utils/foodDatabase';
 import { HEALTH_THRESHOLDS } from './utils/healthThresholds';
 import { getTimeBlock } from './utils/helpers';
-import { firebaseConfig, APP_ID, SHARED_USER_ID, GEMINI_API_KEY } from './config/firebase';
+import { firebaseConfig, APP_ID, SHARED_USER_ID, GEMINI_API_KEY, auth, db as firebaseDb } from './config/firebase';
 
 // Shared Components
 import EntryView from './components/Entry/EntryView';
@@ -15,28 +15,30 @@ import SafeView from './components/Common/SafeView';
 import BioStatusView from './components/Bio/BioStatusView';
 import SaludView from './components/Common/SaludView';
 import HistoryView from './components/History/HistoryView';
+import DinnerProtocolView from './components/Dinner/DinnerProtocolView';
 import CoachHub from './components/Coach/CoachHub';
 
 import './App.css';
 
 // Initialize Firebase
-let db = null;
-let auth = null;
-try {
-  const app = initializeApp(firebaseConfig);
-  db = getFirestore(app);
-  auth = getAuth(app);
-} catch (e) {
-  console.error('Firebase init error:', e);
-}
+export let db = firebaseDb;
+// Auth is now imported directly from firebase.js
 
 function App() {
   const [user, setUser] = useState(null);
   const [logs, setLogs] = useState([]);
   const [myFoods, setMyFoods] = useState([]);
   const [dinnerFeedback, setDinnerFeedback] = useState([]);
+  const [wisdomLogs, setWisdomLogs] = useState([]);
+  const [wisdomSummary, setWisdomSummary] = useState(null);
   const [manualDayType, setManualDayType] = useState(null);
-  const [activeTab, setActiveTab] = useState('entrada');
+  const [activeTab, setActiveTab] = useState(() => localStorage.getItem('activeTab') || 'entrada');
+
+  // Persist active tab to avoid loss on refresh
+  useEffect(() => {
+    localStorage.setItem('activeTab', activeTab);
+  }, [activeTab]);
+
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem('darkMode') === 'true');
   const [firebaseReady, setFirebaseReady] = useState(false);
   const [firebaseError, setFirebaseError] = useState(null);
@@ -65,7 +67,7 @@ function App() {
     console.log(msg);
     setDebugLog(prev => [msg, ...prev].slice(0, 20));
   };
-  const [entryDate, setEntryDate] = useState(new Date().toISOString().slice(0, 10)); // YYYY-MM-DD
+  const [entryDate, setEntryDate] = useState(new Date().toLocaleDateString('sv')); // YYYY-MM-DD
   const [foodToEdit, setFoodToEdit] = useState(null); // Coordinate editing from other tabs
 
   // Initialize Firebase auth
@@ -140,7 +142,22 @@ function App() {
         console.error('Firestore settings error:', error);
       });
 
-      return () => { unsubLogs(); unsubFoods(); unsubFeedback(); unsubSettings(); };
+      const wisdomRef = collection(db, `artifacts/${APP_ID}/users/${uid}/wisdom_logs`);
+      const unsubWisdom = onSnapshot(firestoreQuery(wisdomRef), (snap) => {
+        const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        setWisdomLogs(data.sort((a, b) => b.timestamp - a.timestamp));
+      }, (error) => {
+        console.error('Firestore wisdom logs error:', error);
+      });
+
+      const summaryRef = doc(db, `artifacts/${APP_ID}/users/${uid}/settings`, 'wisdom_summary');
+      const unsubSummary = onSnapshot(summaryRef, (snap) => {
+        if (snap.exists()) setWisdomSummary(snap.data());
+      }, (error) => {
+        console.error('Firestore wisdom summary error:', error);
+      });
+
+      return () => { unsubLogs(); unsubFoods(); unsubFeedback(); unsubSettings(); unsubWisdom(); unsubSummary(); };
     } catch (e) {
       console.error('Firestore setup error:', e);
     }
@@ -164,10 +181,10 @@ function App() {
   const todayLogs = useMemo(() => logs.filter(l => l.dateISO === today), [logs]);
 
   // Add food log
-  const addLog = async (food) => {
+  const addLog = async (food, idToUpdate = null) => {
     if (!db) return;
     const uid = SHARED_USER_ID;
-    const id = Date.now().toString();
+    const id = idToUpdate || Date.now().toString();
     const log = {
       ...food,
       id,
@@ -178,11 +195,9 @@ function App() {
     };
     try {
       await setDoc(doc(db, `artifacts/${APP_ID}/users/${uid}/food_logs`, id), log);
-      setQuery('');
-      setSearchResults([]);
-      // Stay on entry tab to allow adding more items easily
+      // Removed setQuery('') and setSearchResults([]) to allow multi-add from same search
     } catch (e) {
-      console.error('Add log error:', e);
+      console.error('Add/Update log error:', e);
     }
   };
 
@@ -224,6 +239,20 @@ function App() {
     } catch (e) {
       console.error('Delete log error:', e);
     }
+  };
+
+  const editLog = (log) => {
+    setFoodToEdit(log);
+    // Normalize date to YYYY-MM-DD
+    let dateISO = log.dateISO;
+    if (!dateISO && log.dateStr) {
+      const parts = log.dateStr.split('/');
+      if (parts.length === 3) {
+        dateISO = `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+      }
+    }
+    if (dateISO) setEntryDate(dateISO);
+    setActiveTab('entrada');
   };
 
   // Search foods
@@ -291,7 +320,7 @@ function App() {
         }`;
 
         let requestBody;
-        const model = 'gemini-flash-latest';
+        const model = 'gemini-2.0-flash';
         console.log(`🤖 IA Iniciando: ${imageFile ? 'CÁMARA' : 'TEXTO'} - ${q || 'Imagen'}`);
 
         if (imageFile) {
@@ -305,10 +334,11 @@ function App() {
 
           const prompt = `Analiza esta fotografía de comida. 
           TAREAS:
-          1. Identifica cada alimento (ej: si es una naranja, nómbrala; si es un plato de pasta, identifica sus partes).
+          1. Identifica cada alimento estrictamente en ESPAÑOL (ej: si es una naranja, nómbrala "Naranja"; si es un plato de pasta, identifica sus partes en español).
           2. Estima la ración visual y calcula valores nutricionales realistas (Calories, Prot, Carbs, Fat, Fiber, Na, K, Ca, Mg).
           3. IMPORTANTE: Si es una pieza única (1 fruta, 1 huevo, 1 yogur), usa ración "1 unidad".
-          4. RESPONDE EXCLUSIVAMENTE CON EL SIGUIENTE FORMATO JSON (sin texto antes ni después):
+          4. IMPORTANTE: Todos los campos de texto ("name" y "portion") deben estar en ESPAÑOL.
+          5. RESPONDE EXCLUSIVAMENTE CON EL SIGUIENTE FORMATO JSON (sin texto antes ni después):
           
           ${jsonSchema}`;
 
@@ -333,7 +363,8 @@ function App() {
           };
         } else {
           // --- TEXT SEARCH ---
-          const prompt = `Calcula nutrición para: "${q}"
+          const prompt = `Calcula nutrición para: "${q}". 
+          IMPORTANTE: Responde con los nombres de los alimentos y raciones estrictamente en ESPAÑOL.
           Si hay varios platos, desglósalos. Responde SOLO JSON con esquema: ${jsonSchema}`;
           logDebug(`🔤 Texto: "${q}"`);
 
@@ -484,8 +515,47 @@ function App() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `nutriminerals-backup-${todayISO}.json`;
+    a.download = `nutriminerals-backup-${today}.json`;
     a.click();
+  };
+
+  const saveWisdomLog = async (log) => {
+    if (!db) return;
+    try {
+      const uid = SHARED_USER_ID;
+      const ref = doc(collection(db, `artifacts/${APP_ID}/users/${uid}/wisdom_logs`));
+      await setDoc(ref, {
+        ...log,
+        timestamp: Date.now(),
+        dateStr: new Date().toLocaleDateString('sv')
+      });
+    } catch (e) {
+      console.error('Save wisdom log error:', e);
+    }
+  };
+
+  const saveWisdomSummary = async (summary) => {
+    if (!db) return;
+    try {
+      const uid = SHARED_USER_ID;
+      const ref = doc(db, `artifacts/${APP_ID}/users/${uid}/settings`, 'wisdom_summary');
+      await setDoc(ref, {
+        ...summary,
+        lastUpdated: Date.now()
+      });
+    } catch (e) {
+      console.error('Save wisdom summary error:', e);
+    }
+  };
+
+  const deleteWisdomLog = async (id) => {
+    if (!db) return;
+    try {
+      const uid = SHARED_USER_ID;
+      await deleteDoc(doc(db, `artifacts/${APP_ID}/users/${uid}/wisdom_logs`, id));
+    } catch (e) {
+      console.error('Delete wisdom log error:', e);
+    }
   };
 
   const importData = async (file) => {
@@ -513,8 +583,9 @@ function App() {
   const tabs = [
     { id: 'entrada', label: 'Entrada', icon: Icons.PlusCircle },
     { id: 'diario', label: 'Diario', icon: Icons.Book },
-    { id: 'bio', label: 'Bio', icon: Icons.Activity },
     { id: 'salud', label: 'Salud', icon: Icons.Heart },
+    { id: 'cenas', label: 'Cenas', icon: Icons.Utensils },
+    { id: 'bio', label: 'Bio', icon: Icons.Activity },
     { id: 'historial', label: 'Historial', icon: Icons.History },
     { id: 'coach', label: 'Entrenador', icon: Icons.Bike },
   ];
@@ -550,7 +621,8 @@ function App() {
       case 'diario':
         return <SafeView><DiaryView
           logs={logs} onDelete={deleteLog} thresholds={HEALTH_THRESHOLDS} tssToday={0}
-          onSaveFood={saveToMyFoods} myFoods={myFoods} manualDayType={manualDayType} onSaveManualDayType={saveManualDayType} /></SafeView>;
+          onSaveFood={saveToMyFoods} myFoods={myFoods} manualDayType={manualDayType} onSaveManualDayType={saveManualDayType}
+          dinnerFeedback={dinnerFeedback} /></SafeView>;
       case 'bio':
         return <SafeView><BioStatusView logs={logs} /></SafeView>;
       case 'salud':
@@ -559,7 +631,16 @@ function App() {
       case 'historial':
         return <SafeView><HistoryView
           logs={logs} onExport={exportData} onImport={importData}
-          user={user} onSaveFood={saveToMyFoods} myFoods={myFoods} /></SafeView>;
+          user={user} onSaveFood={saveToMyFoods} myFoods={myFoods}
+          onDelete={deleteLog} onEdit={editLog}
+          wisdomLogs={wisdomLogs}
+          wisdomSummary={wisdomSummary}
+          onSaveWisdom={saveWisdomLog}
+          onSaveWisdomSummary={saveWisdomSummary}
+          onDeleteWisdom={deleteWisdomLog}
+        /></SafeView>;
+      case 'cenas':
+        return <SafeView><DinnerProtocolView logs={logs} dinnerFeedback={dinnerFeedback} onSaveFeedback={saveDinnerFeedback} /></SafeView>;
       case 'coach':
         return <SafeView><CoachHub logs={logs} useFirebase={!!db} dbRef={dbRef} appId={APP_ID} /></SafeView>;
       default:
@@ -607,7 +688,6 @@ function App() {
         <h1 className="text-xl font-black tracking-tighter uppercase italic flex items-center gap-2">
           <span className="bg-white text-indigo-700 px-1.5 rounded-lg not-italic">N</span>
           Nutriminerals
-          <span className="text-[8px] opacity-100 ml-2 font-black tracking-widest bg-yellow-400 text-black px-1.5 py-0.5 rounded shadow-sm">v2.4.4</span>
         </h1>
         <div className="flex items-center gap-3">
           <button onClick={toggleFullScreen} className="p-2.5 rounded-xl bg-white/10 hover:bg-white/20 transition-all active:scale-95 text-white">
@@ -634,33 +714,66 @@ function App() {
       )}
 
       {/* Main Navigation Bar */}
-      <nav className="fixed bottom-0 left-0 right-0 bg-white/90 dark:bg-slate-900/90 backdrop-blur-lg border-t border-theme pb-safe z-50">
-        <div className="flex justify-around items-center h-16 px-1">
-          {tabs.map((tab) => {
-            const Icon = tab.icon;
-            const isActive = activeTab === tab.id;
-            return (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={`flex flex-col items-center justify-center w-full h-full space-y-1 transition-all duration-300 relative ${isActive ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-400'
-                  }`}
-              >
-                {isActive && (
-                  <span className="absolute -top-[1px] w-8 h-1 bg-indigo-600 rounded-b-full shadow-[0_2px_10px_rgba(79,70,229,0.5)] animate-width-expand" />
-                )}
-                <Icon
-                  size={isActive ? 24 : 20}
-                  strokeWidth={isActive ? 2.5 : 2}
-                  className={`transition-all duration-300 ${isActive ? 'transform scale-110 drop-shadow-md' : 'opacity-70 group-hover:opacity-100'}`}
-                />
-                <span className={`text-[9px] font-bold tracking-wide transition-all duration-300 ${isActive ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2 hidden'
-                  }`}>
-                  {tab.label}
-                </span>
-              </button>
-            );
-          })}
+      {/* Main Navigation Bar - Floating Premium Design */}
+      <nav className="fixed bottom-6 left-4 right-4 z-50 pointer-events-none">
+        <div className="max-w-xl mx-auto pointer-events-auto">
+          <div className="bg-slate-900/80 dark:bg-black/80 backdrop-blur-2xl border border-white/10 rounded-[3rem] px-2 py-3 shadow-[0_20px_50px_rgba(0,0,0,0.5)] flex justify-between items-center relative overflow-hidden">
+            {/* Ambient background glow inside the bar */}
+            <div className="absolute inset-0 bg-gradient-to-r from-indigo-500/5 via-transparent to-pink-500/5 pointer-events-none"></div>
+
+            {tabs.map((tab) => {
+              const Icon = tab.icon;
+              const isActive = activeTab === tab.id;
+
+              // Unique color themes for each tab to give "joy" and "life"
+              const getTabTheme = (id) => {
+                switch (id) {
+                  case 'entrada': return { color: 'text-emerald-400', bg: 'bg-emerald-400/20', shadow: 'shadow-emerald-500/40' };
+                  case 'diario': return { color: 'text-amber-400', bg: 'bg-amber-400/20', shadow: 'shadow-amber-500/40' };
+                  case 'bio': return { color: 'text-rose-400', bg: 'bg-rose-400/20', shadow: 'shadow-rose-500/40' };
+                  case 'salud': return { color: 'text-indigo-400', bg: 'bg-indigo-400/20', shadow: 'shadow-indigo-500/40' };
+                  case 'historial': return { color: 'text-sky-400', bg: 'bg-sky-400/20', shadow: 'shadow-sky-500/40' };
+                  case 'cenas': return { color: 'text-yellow-400', bg: 'bg-yellow-400/20', shadow: 'shadow-yellow-500/40' };
+                  case 'coach': return { color: 'text-orange-400', bg: 'bg-orange-400/20', shadow: 'shadow-orange-500/40' };
+                  default: return { color: 'text-indigo-400', bg: 'bg-indigo-400/20', shadow: 'shadow-indigo-500/40' };
+                }
+              };
+
+              const theme = getTabTheme(tab.id);
+
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`relative flex flex-col items-center justify-center py-2 px-1 rounded-2xl transition-all duration-500 ease-spring ${isActive ? 'flex-[2] sm:flex-[1.5]' : 'flex-1'
+                    }`}
+                >
+                  {isActive && (
+                    <span className={`absolute inset-0 ${theme.bg} rounded-[2rem] blur-sm animate-pulse scale-90`} />
+                  )}
+
+                  <div className={`relative z-10 flex items-center justify-center p-2 rounded-xl transition-all duration-500 ${isActive ? `${theme.color} ${theme.bg} ${theme.shadow} scale-110 shadow-lg` : 'text-slate-500 hover:text-slate-300'
+                    }`}>
+                    <Icon
+                      size={isActive ? 24 : 22}
+                      strokeWidth={isActive ? 2.5 : 2}
+                      className={`transition-transform duration-500 ${isActive ? 'rotate-[360deg]' : ''}`}
+                    />
+
+                    {isActive && (
+                      <span className="ml-2 text-[10px] font-black uppercase tracking-widest hidden sm:block whitespace-nowrap animate-in fade-in slide-in-from-left-2 duration-500">
+                        {tab.label}
+                      </span>
+                    )}
+                  </div>
+
+                  {isActive && (
+                    <span className={`absolute -bottom-1 w-1.5 h-1.5 rounded-full ${theme.color.replace('text-', 'bg-')} shadow-[0_0_10px_currentColor]`} />
+                  )}
+                </button>
+              );
+            })}
+          </div>
         </div>
       </nav>
     </div>

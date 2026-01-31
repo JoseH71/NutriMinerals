@@ -2,7 +2,7 @@
   "name": "Nutriminerals PRO",
   "short_name": "NutriMinerals",
   "description": "Gestión de nutrición y salud cardiovascular de alto rendimiento",
-  "id": "nutriminerals-pwa-v2",
+  "id": "nutriminerals-pwa-v3",
   "start_url": "/?pwa=true",
   "scope": "/",
   "display": "standalone",

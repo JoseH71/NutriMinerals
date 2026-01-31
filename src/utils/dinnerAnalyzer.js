@@ -152,7 +152,9 @@ export const getSymptomEmoji = (tag) => {
         'fa': '⚡',
         'bien': '💤',
         'reflujo': '🔥',
-        'estres': '😰'
+        'estres': '😰',
+        'estres_garmin': '📊',
+        'hrv_alta': '📈'
     };
     return emojiMap[tag] || '•';
 };
@@ -168,7 +170,9 @@ export const getSymptomLabel = (tag) => {
         'fa': 'FA',
         'bien': 'Bien',
         'reflujo': 'Reflujo',
-        'estres': 'Estrés'
+        'estres': 'Estrés',
+        'estres_garmin': 'Estrés Garmin',
+        'hrv_bajo': 'HRV Baja'
     };
     return labelMap[tag] || tag;
 };

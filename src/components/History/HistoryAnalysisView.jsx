@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import * as Icons from 'lucide-react';
 import { ATHLETE_ID, INTERVALS_API_KEY } from '../../config/firebase';
+import { fetchIntervalsActivities } from '../../utils/intervalsData';
 
 const METRICS_CONFIG = {
     // Wellness / Performance
@@ -9,7 +10,9 @@ const METRICS_CONFIG = {
     sleepScore: { label: 'Sueño', icon: <Icons.Moon size={14} />, color: 'text-indigo-500', unit: '%', category: 'wellness' },
     tss: { label: 'TSS (Carga)', icon: <Icons.Zap size={14} />, color: 'text-amber-500', unit: '', category: 'wellness' },
     tsb: { label: 'TSB (Forma)', icon: <Icons.TrendingUp size={14} />, color: 'text-cyan-500', unit: '', category: 'wellness' },
-    activityType: { label: 'Actividad', icon: <Icons.Bike size={14} />, color: 'text-slate-500', unit: '', category: 'wellness' },
+    activityType: { label: 'Tipo', icon: <Icons.Bike size={14} />, color: 'text-slate-500', unit: '', category: 'wellness' },
+    activityName: { label: 'Descripción', icon: <Icons.FileText size={14} />, color: 'text-violet-500', unit: '', category: 'wellness' },
+    taurinaNoche: { label: 'Taurina Noche', icon: <Icons.Pill size={14} />, color: 'text-pink-500', unit: '', category: 'wellness' },
 
     // Nutrition - Macros
     calories: { label: 'Calorías', icon: <Icons.Flame size={14} />, color: 'text-orange-500', unit: 'kcal', category: 'nutrition' },
@@ -45,13 +48,8 @@ const HistoryAnalysisView = ({ logs, intervalsData, onClose }) => {
     useEffect(() => {
         const fetchActivities = async () => {
             try {
-                const apiUrl = `https://intervals.icu/api/v1/athlete/${ATHLETE_ID}/activities?oldest=${dateFrom}&newest=${dateTo}`;
-                const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(apiUrl)}`;
-                const res = await fetch(proxyUrl, {
-                    headers: { 'Authorization': 'Basic ' + btoa('API_KEY:' + INTERVALS_API_KEY) }
-                });
-                if (res.ok) {
-                    const data = await res.json();
+                const data = await fetchIntervalsActivities(dateFrom, dateTo);
+                if (data) {
                     setActivitiesData(data);
                 }
             } catch (e) {
@@ -88,6 +86,12 @@ const HistoryAnalysisView = ({ logs, intervalsData, onClose }) => {
                 mg: acc.mg + (Number(l.mg) || 0),
             }), { calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, na: 0, k: 0, ca: 0, mg: 0 });
 
+            // Check for Taurina at night
+            const taurinaAtNight = dayLogs.some(l =>
+                l.timeBlock === 'noche' &&
+                l.name?.toLowerCase().includes('taurina')
+            );
+
             // 2. Get Intervals Data
             const wellness = intervalsData.find(w => w.id === dateStr) || {};
             // Calculate TSB manually if needed
@@ -98,6 +102,11 @@ const HistoryAnalysisView = ({ logs, intervalsData, onClose }) => {
             const dailyTSS = dayActivities.reduce((sum, a) => sum + (a.icu_training_load || 0), 0);
             const activityTypes = dayActivities.length > 0
                 ? [...new Set(dayActivities.map(a => a.type || 'Actividad'))].join(', ')
+                : '';
+
+            // Get activity names/descriptions (e.g., "Gym Upper", "Z2 Recovery", etc.)
+            const activityNames = dayActivities.length > 0
+                ? dayActivities.map(a => a.name || a.description || a.type || 'Actividad').join(', ')
                 : '';
 
             // Manual date formatting to avoid locale issues
@@ -115,6 +124,8 @@ const HistoryAnalysisView = ({ logs, intervalsData, onClose }) => {
                 tss: dailyTSS || 0,
                 tsb: tsb,
                 activityType: activityTypes,
+                activityName: activityNames,
+                taurinaNoche: taurinaAtNight ? 'Sí' : 'No',
             });
         }
         return data.reverse(); // Newest first

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import * as Icons from 'lucide-react';
 import { ATHLETE_ID, INTERVALS_API_KEY } from '../../config/firebase';
+import { fetchIntervalsActivities } from '../../utils/intervalsData';
 
 const CoachActivityView = () => {
     const [loading, setLoading] = useState(true);
@@ -16,16 +17,22 @@ const CoachActivityView = () => {
             try {
                 setLoading(true);
                 const today = new Date().toISOString().split('T')[0];
-                const oldest = new Date(Date.now() - dateRange * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-                const url = `https://corsproxy.io/?${encodeURIComponent(`https://intervals.icu/api/v1/athlete/${ATHLETE_ID}/activities?oldest=${oldest}&newest=${today}`)}`;
-                const res = await fetch(url, { headers: { 'Authorization': 'Basic ' + btoa('API_KEY:' + INTERVALS_API_KEY) } });
-                if (!res.ok) throw new Error('Error al cargar actividades');
-                const data = await res.json();
-                const filtered = data.filter(a => ['Ride', 'VirtualRide', 'Run', 'WeightTraining', 'Swim', 'Walk'].includes(a.type));
-                const sorted = filtered.sort((a, b) => new Date(b.start_date_local) - new Date(a.start_date_local));
-                setActivities(sorted);
-                if (sorted.length > 0) setSelectedActivity(sorted[0]);
-            } catch (e) { setError(e.message); } finally { setLoading(false); }
+                const oldestDate = new Date();
+                oldestDate.setDate(oldestDate.getDate() - dateRange);
+                const oldest = oldestDate.toISOString().split('T')[0];
+
+                const data = await fetchIntervalsActivities(oldest, today);
+                if (data) {
+                    const filtered = data.filter(a => ['Ride', 'VirtualRide', 'Run', 'WeightTraining', 'Swim', 'Walk'].includes(a.type));
+                    const sorted = filtered.sort((a, b) => new Date(b.start_date_local) - new Date(a.start_date_local));
+                    setActivities(sorted);
+                    if (sorted.length > 0) setSelectedActivity(sorted[0]);
+                }
+            } catch (e) {
+                setError(e.message);
+            } finally {
+                setLoading(false);
+            }
         };
         fetchActivities();
     }, [dateRange]);

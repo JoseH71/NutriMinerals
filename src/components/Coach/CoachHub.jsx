@@ -5,6 +5,7 @@ import CoachHistoryView from './CoachHistoryView';
 import CoachCorrelationsView from './CoachCorrelationsView';
 import MesocicloView from '../Mesociclo/MesocicloView';
 import { ATHLETE_ID, INTERVALS_API_KEY } from '../../config/firebase';
+import { fetchIntervalsData } from '../../utils/intervalsData';
 
 const CoachHub = ({ logs, useFirebase, dbRef, appId }) => {
     const [subTab, setSubTab] = useState('activity'); // activity, history, correlations, plan
@@ -18,33 +19,13 @@ const CoachHub = ({ logs, useFirebase, dbRef, appId }) => {
             try {
                 setLoading(true);
                 const days = 180;
-                const today = new Date().toISOString().split('T')[0];
-                const oldest = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
-                // Parallel fetch
-                const auth = 'Basic ' + btoa('API_KEY:' + INTERVALS_API_KEY);
-                const wellnessUrl = `https://corsproxy.io/?${encodeURIComponent(`https://intervals.icu/api/v1/athlete/${ATHLETE_ID}/wellness?oldest=${oldest}&newest=${today}`)}`;
-                const activitiesUrl = `https://corsproxy.io/?${encodeURIComponent(`https://intervals.icu/api/v1/athlete/${ATHLETE_ID}/activities?oldest=${oldest}&newest=${today}`)}`;
-
-                const [resWellness, resActivities] = await Promise.all([
-                    fetch(wellnessUrl, { headers: { 'Authorization': auth } }),
-                    fetch(activitiesUrl, { headers: { 'Authorization': auth } })
-                ]);
-
-                if (!resWellness.ok) throw new Error('Error wellness API');
-                if (!resActivities.ok) throw new Error('Error activities API');
-
-                const wellness = await resWellness.json();
-                const activities = await resActivities.json();
-
-                // Merge Data
-                const merged = wellness.map(day => {
-                    const dayActs = activities.filter(a => a.start_date_local.startsWith(day.id));
-                    const dailyTSS = dayActs.reduce((sum, a) => sum + (a.icu_training_load || 0), 0);
-                    return { ...day, dailyTSS, activities: dayActs };
-                });
-
-                setHistoryData(merged.sort((a, b) => a.id.localeCompare(b.id))); // Ensure sorted by date
+                const data = await fetchIntervalsData(days);
+                if (data) {
+                    setHistoryData(data.sort((a, b) => a.id.localeCompare(b.id)));
+                } else {
+                    throw new Error('No se pudo obtener datos de Intervals');
+                }
             } catch (e) {
                 console.error("Coach data fetch error:", e);
                 setError("Error al cargar datos de Intervals.icu");
@@ -79,7 +60,15 @@ const CoachHub = ({ logs, useFirebase, dbRef, appId }) => {
         <div className="space-y-4 animate-fade-in px-2 pb-20">
             <div className="px-1 flex justify-between items-center mb-2">
                 <h2 className="text-2xl font-black tracking-tighter uppercase">Coach Inteligente</h2>
-                <div className="flex gap-1">
+                <div className="flex gap-1 items-center">
+                    {historyData && historyData.length > 0 && (
+                        <span className={`px-2 py-0.5 rounded-md text-[8px] font-black uppercase tracking-tighter border ${historyData[0]._source === 'network'
+                                ? 'bg-emerald-50 text-emerald-600 border-emerald-200'
+                                : 'bg-amber-50 text-amber-600 border-amber-200'
+                            }`}>
+                            {historyData[0]._source === 'network' ? '● Live' : '● PC Sync'}
+                        </span>
+                    )}
                     <span className="px-3 py-1 bg-violet-100 dark:bg-violet-900/40 text-violet-600 dark:text-violet-300 rounded-full text-[10px] font-black border border-violet-200 dark:border-violet-800 uppercase tracking-widest">Intervals.icu</span>
                 </div>
             </div>

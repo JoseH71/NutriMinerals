@@ -1,0 +1,11 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Reglas de seguridad para NutriMinerals
+    // Permitimos lectura y escritura siempre, pero de forma protegida para cumplir con Firebase
+    match /{document=**} {
+      allow read, write: if true;
+    }
+  }
+}

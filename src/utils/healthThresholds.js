@@ -50,208 +50,64 @@ export const getZoneEmoji = (status) => {
  * @param {boolean} manualOverride - Force rest (false) or training (true) mode
  */
 export const getHealthThresholds = (tssToday = 0, manualOverride = null) => {
-    // Determine day type: auto (TSS >= 40) or manual override
-    const isTrainingDay = manualOverride !== null ? manualOverride : tssToday >= 40;
+    // Determine day type: if manualOverride is set ('gym', 'bici', 'descanso'), use it.
+    // Otherwise, infer from TSS: >= 40 is Bici by default, < 40 is Descanso.
+    let type = manualOverride;
+    if (!type) {
+        type = tssToday >= 40 ? 'bici' : 'descanso';
+    }
 
-    if (isTrainingDay) {
-        // 🔵 TRAINING DAY (gym o Z2, 60-90 min)
+    const baseMacros = {
+        protein: { min: 100, optLow: 110, optHigh: 125, max: 140, unit: 'g' },
+        fat: { min: 55, optLow: 70, optHigh: 75, max: 90, unit: 'g' },
+        fiber: { min: 20, optLow: 25, optHigh: 30, max: 35, unit: 'g' },
+    };
+
+    const commonMicros = {
+        calcium: { min: 800, optLow: 1000, optHigh: 1200, max: 2000, unit: 'mg', label: 'Calcio' },
+        magnesium: { min: 600, optLow: 650, optHigh: 700, max: 800, unit: 'mg', label: 'Magnesio' },
+        omega3: { min: 500, optLow: 1000, optHigh: 1000, max: 2000, unit: 'mg', label: 'Omega-3' }
+    };
+
+    if (type === 'gym') {
         return {
-            dayType: 'entreno',
-            dayLabel: '🔵 Día de Entreno',
-
-            // CALORÍAS
-            calories: {
-                min: 2300,
-                optLow: 2450,
-                optHigh: 2650,
-                max: 2800,
-                unit: 'kcal'
-            },
-
-            // MACROS
-            protein: {
-                min: 100,
-                optLow: 110,
-                optHigh: 125,
-                max: 140,
-                unit: 'g'
-            },
-            carbs: {
-                min: 245,
-                optLow: 280,
-                optHigh: 350,
-                max: 385,
-                unit: 'g'
-            },
-            fat: {
-                min: 55,
-                optLow: 70,
-                optHigh: 75,
-                max: 90,
-                unit: 'g'
-            },
-            fiber: {
-                min: 20,
-                optLow: 25,
-                optHigh: 30,
-                max: 35,
-                unit: 'g'
-            },
-
-            // MICROS
-            sodium: {
-                min: 2500,
-                optLow: 2500,
-                optHigh: 3000,
-                max: 3500,
-                unit: 'mg',
-                label: 'Sodio'
-            },
-            potassium: {
-                min: 3300,
-                optLow: 3800,
-                optHigh: 4500,
-                max: 5000,
-                unit: 'mg',
-                label: 'Potasio'
-            },
-            calcium: {
-                min: 800,
-                optLow: 1000,
-                optHigh: 1200,
-                max: 2000,
-                unit: 'mg',
-                label: 'Calcio'
-            },
-            magnesium: {
-                min: 600,
-                optLow: 650,
-                optHigh: 700,
-                max: 800,
-                unit: 'mg',
-                label: 'Magnesio'
-            },
-            omega3: {
-                min: 500,
-                optLow: 1000,
-                optHigh: 1000,
-                max: 2000,
-                unit: 'mg',
-                label: 'Omega-3'
-            },
-
-            // RATIOS (unchanged)
-            ratios: {
-                na_k: { ideal: 1.0, high: 1.3 },
-                ca_mg: { ideal: 2.5, high: 3.5 }
-            },
-
-            // NIGHT LIMITS
-            night: {
-                fat: 25,      // max grasa cena
-                fiber: 10,    // max fibra cena
-                calories: 700 // max kcal cena (~30%)
-            }
+            dayType: 'gym',
+            dayLabel: '🏋️ Día de Gym',
+            calories: { min: 2350, optLow: 2450, optHigh: 2550, max: 2650, unit: 'kcal' },
+            ...baseMacros,
+            carbs: { min: 245, optLow: 280, optHigh: 350, max: 385, unit: 'g' },
+            sodium: { min: 2500, optLow: 2500, optHigh: 3000, max: 3500, unit: 'mg', label: 'Sodio' },
+            potassium: { min: 3300, optLow: 3800, optHigh: 4500, max: 5000, unit: 'mg', label: 'Potasio' },
+            ...commonMicros,
+            ratios: { na_k: { ideal: 1.0, high: 1.3 }, ca_mg: { ideal: 2.5, high: 3.5 } },
+            night: { fat: 25, fiber: 10, calories: 700 }
+        };
+    } else if (type === 'bici') {
+        return {
+            dayType: 'bici',
+            dayLabel: '🚴 Día de Bici',
+            calories: { min: 2200, optLow: 2300, optHigh: 2400, max: 2600, unit: 'kcal' },
+            ...baseMacros,
+            carbs: { min: 245, optLow: 280, optHigh: 350, max: 385, unit: 'g' },
+            sodium: { min: 2500, optLow: 2500, optHigh: 3000, max: 3500, unit: 'mg', label: 'Sodio' },
+            potassium: { min: 3300, optLow: 3800, optHigh: 4500, max: 5000, unit: 'mg', label: 'Potasio' },
+            ...commonMicros,
+            ratios: { na_k: { ideal: 1.0, high: 1.3 }, ca_mg: { ideal: 2.5, high: 3.5 } },
+            night: { fat: 25, fiber: 10, calories: 700 }
         };
     } else {
-        // 🟢 REST DAY
+        // descanso
         return {
             dayType: 'descanso',
-            dayLabel: '🟢 Día de Descanso',
-
-            // CALORÍAS
-            calories: {
-                min: 1900,
-                optLow: 2050,
-                optHigh: 2150,
-                max: 2300,
-                unit: 'kcal'
-            },
-
-            // MACROS
-            protein: {
-                min: 100,
-                optLow: 110,
-                optHigh: 125,
-                max: 140,
-                unit: 'g'
-            },
-            carbs: {
-                min: 175,
-                optLow: 210,
-                optHigh: 245,
-                max: 280,
-                unit: 'g'
-            },
-            fat: {
-                min: 55,
-                optLow: 70,
-                optHigh: 75,
-                max: 90,
-                unit: 'g'
-            },
-            fiber: {
-                min: 20,
-                optLow: 25,
-                optHigh: 30,
-                max: 35,
-                unit: 'g'
-            },
-
-            // MICROS
-            sodium: {
-                min: 1500,
-                optLow: 1800,
-                optHigh: 2200,
-                max: 2500,
-                unit: 'mg',
-                label: 'Sodio'
-            },
-            potassium: {
-                min: 3300,
-                optLow: 3800,
-                optHigh: 4500,
-                max: 5000,
-                unit: 'mg',
-                label: 'Potasio'
-            },
-            calcium: {
-                min: 800,
-                optLow: 1000,
-                optHigh: 1200,
-                max: 2000,
-                unit: 'mg',
-                label: 'Calcio'
-            },
-            magnesium: {
-                min: 600,
-                optLow: 650,
-                optHigh: 700,
-                max: 800,
-                unit: 'mg',
-                label: 'Magnesio'
-            },
-            omega3: {
-                min: 500,
-                optLow: 1000,
-                optHigh: 1000,
-                max: 2000,
-                unit: 'mg',
-                label: 'Omega-3'
-            },
-
-            // RATIOS
-            ratios: {
-                na_k: { ideal: 0.9, high: 1.2 },
-                ca_mg: { ideal: 2.5, high: 3.5 }
-            },
-
-            // NIGHT LIMITS
-            night: {
-                fat: 20,
-                fiber: 8,
-                calories: 600
-            }
+            dayLabel: '🛑 Día de Descanso',
+            calories: { min: 2100, optLow: 2150, optHigh: 2200, max: 2300, unit: 'kcal' },
+            ...baseMacros,
+            carbs: { min: 175, optLow: 210, optHigh: 245, max: 280, unit: 'g' },
+            sodium: { min: 1500, optLow: 1800, optHigh: 2200, max: 2500, unit: 'mg', label: 'Sodio' },
+            potassium: { min: 3300, optLow: 3800, optHigh: 4500, max: 5000, unit: 'mg', label: 'Potasio' },
+            ...commonMicros,
+            ratios: { na_k: { ideal: 0.9, high: 1.2 }, ca_mg: { ideal: 2.5, high: 3.5 } },
+            night: { fat: 20, fiber: 8, calories: 600 }
         };
     }
 };

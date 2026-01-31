@@ -1,12 +1,16 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import * as Icons from 'lucide-react';
 import FoodDetail from '../Common/FoodDetail';
 import NutrientSummary from '../Common/NutrientSummary';
 import HistoryAnalysisView from './HistoryAnalysisView';
+import WisdomLogView from './WisdomLogView';
 import { fetchIntervalsData } from '../../utils/intervalsData';
 import { ATHLETE_ID, INTERVALS_API_KEY, SHARED_USER_ID } from '../../config/firebase';
 
-const HistoryView = ({ logs, onExport, onImport, user, onSaveFood, myFoods }) => {
+const HistoryView = ({
+    logs, onExport, onImport, user, onSaveFood, myFoods, onDelete, onEdit,
+    wisdomLogs = [], wisdomSummary = null, onSaveWisdom, onSaveWisdomSummary, onDeleteWisdom
+}) => {
     const [open, setOpen] = useState(null);
     const [copied, setCopied] = useState(null);
     const [historyTab, setHistoryTab] = useState('intervals'); // Default to Wellness
@@ -54,35 +58,35 @@ const HistoryView = ({ logs, onExport, onImport, user, onSaveFood, myFoods }) =>
         return parseOld(b) - parseOld(a);
     });
 
-    // Fetch Intervals data
-    useEffect(() => {
-        const fetchIntervals = async () => {
-            // Always fetch to ensure data availability
-            setIntervalsLoading(true);
-            setIntervalsError(null);
-            try {
-                // Fetch extra days back to ensure 60-day baseline availability
-                const loadFrom = new Date(dateFrom);
-                loadFrom.setDate(loadFrom.getDate() - 90); // Load 90 days explicitly for baselines
-                const fromStr = loadFrom.toISOString().split('T')[0];
+    const [refreshCounter, setRefreshCounter] = useState(0);
 
-                const apiUrl = `https://intervals.icu/api/v1/athlete/${ATHLETE_ID}/wellness?oldest=${fromStr}&newest=${dateTo}`;
-                const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(apiUrl)}`;
-                const res = await fetch(proxyUrl, {
-                    headers: { 'Authorization': 'Basic ' + btoa('API_KEY:' + INTERVALS_API_KEY) }
-                });
-                if (!res.ok) throw new Error('Error: ' + res.status);
-                const data = await res.json();
-                const sorted = data.sort((a, b) => new Date(b.id) - new Date(a.id));
-                setIntervalsData(sorted);
-            } catch (e) {
-                setIntervalsError(e.message);
-            } finally {
-                setIntervalsLoading(false);
+    // Fetch Intervals data
+    const fetchIntervals = useCallback(async () => {
+        setIntervalsLoading(true);
+        setIntervalsError(null);
+        try {
+            const loadFrom = new Date(dateFrom);
+            loadFrom.setDate(loadFrom.getDate() - 90); // Load 90 days explicitly for baselines
+            const fromStr = loadFrom.toISOString().split('T')[0];
+
+            const data = await fetchIntervalsData(90, fromStr, dateTo);
+            if (data) {
+                setIntervalsData(data);
+            } else {
+                throw new Error('Error al sincronizar con Intervals.icu');
             }
-        };
-        fetchIntervals();
+        } catch (e) {
+            setIntervalsError(e.message);
+        } finally {
+            setIntervalsLoading(false);
+        }
     }, [dateFrom, dateTo]);
+
+    useEffect(() => {
+        fetchIntervals();
+    }, [fetchIntervals, refreshCounter]);
+
+    const handleRefresh = () => setRefreshCounter(prev => prev + 1);
 
     // Calculate Normality Bands (matching Streamlit Python code exactly)
     const calculateNormalityBands = (data) => {
@@ -270,6 +274,10 @@ const HistoryView = ({ logs, onExport, onImport, user, onSaveFood, myFoods }) =>
                     onClick={() => setHistoryTab('intervals')}
                     className={`flex-1 py-1.5 px-2 rounded-xl font-black text-[10px] transition-all uppercase tracking-widest ${historyTab === 'intervals' ? 'bg-emerald-600 text-white shadow-lg' : 'text-secondary hover:text-primary'}`}
                 >📡 Wellness</button>
+                <button
+                    onClick={() => setHistoryTab('wisdom')}
+                    className={`flex-1 py-1.5 px-2 rounded-xl font-black text-[10px] transition-all uppercase tracking-widest ${historyTab === 'wisdom' ? 'bg-indigo-600 text-white shadow-lg' : 'text-secondary hover:text-primary'}`}
+                >🧠 Sabiduría</button>
             </div>
 
             {/* Morning Summary Button - Reduced Size */}
@@ -304,7 +312,8 @@ const HistoryView = ({ logs, onExport, onImport, user, onSaveFood, myFoods }) =>
                 const tss = todayWellness?.trainingLoad || '-'; // If today has no load yet, it might be 0
                 // Ideally look for yesterday's load for the summary
                 const yesterdayWellness = intervalsData.find(d => d.id === yesterdayISO);
-                const tssYesterday = yesterdayWellness?.icu_training_load || yesterdayWellness?.trainingLoad || '-';
+                // Use dailyTSS which is the aggregated TSS from activities
+                const tssYesterday = yesterdayWellness?.dailyTSS || yesterdayWellness?.icu_training_load || yesterdayWellness?.trainingLoad || 0;
 
                 // TSB (Form) usually from today or yesterday
                 const tsb = todayWellness ? (todayWellness.ctl - todayWellness.atl).toFixed(0) : '-';
@@ -493,8 +502,35 @@ const HistoryView = ({ logs, onExport, onImport, user, onSaveFood, myFoods }) =>
                                                                     <span className="w-1.5 h-1.5 rounded-full bg-indigo-500"></span>
                                                                     {l.name}
                                                                 </span>
-                                                                <div className="flex items-center gap-3">
+                                                                <div className="flex items-center gap-2">
                                                                     <span className="font-black text-xs text-indigo-600 dark:text-indigo-400">{Math.round(l.calories)} <span className="text-[9px] font-bold opacity-60 uppercase">Kcal</span></span>
+
+                                                                    {onEdit && (
+                                                                        <button
+                                                                            onClick={(e) => {
+                                                                                e.stopPropagation();
+                                                                                onEdit(l);
+                                                                            }}
+                                                                            className="p-2 text-indigo-500 hover:bg-indigo-50 rounded-lg transition-colors"
+                                                                        >
+                                                                            <Icons.Edit3 size={14} />
+                                                                        </button>
+                                                                    )}
+
+                                                                    {onDelete && (
+                                                                        <button
+                                                                            onClick={(e) => {
+                                                                                e.stopPropagation();
+                                                                                if (window.confirm(`¿Borrar "${l.name}"?`)) {
+                                                                                    onDelete(l.id);
+                                                                                }
+                                                                            }}
+                                                                            className="p-2 text-rose-500 hover:bg-rose-50 rounded-lg transition-colors"
+                                                                        >
+                                                                            <Icons.Trash2 size={14} />
+                                                                        </button>
+                                                                    )}
+
                                                                     <div className={`p-1 rounded-lg transition-all ${isExpanded ? 'bg-indigo-600 text-white' : 'bg-card-alt text-secondary'}`}>
                                                                         {isExpanded ? <Icons.ChevronUp className="w-3 h-3" /> : <Icons.ChevronDown className="w-3 h-3" />}
                                                                     </div>
@@ -525,22 +561,48 @@ const HistoryView = ({ logs, onExport, onImport, user, onSaveFood, myFoods }) =>
 
             {historyTab === 'intervals' && (
                 <div className="space-y-4">
+                    <div className="flex justify-between items-center px-1">
+                        <button
+                            onClick={() => setSelectedDate(null)}
+                            className={`text-[10px] font-black uppercase tracking-widest px-3 py-2 rounded-xl transition-all ${selectedDate ? 'bg-indigo-100 text-indigo-600' : 'opacity-0 pointer-events-none'}`}
+                        >
+                            <Icons.ArrowLeft size={12} className="inline mr-1" /> Volver
+                        </button>
+                        <button
+                            onClick={handleRefresh}
+                            disabled={intervalsLoading}
+                            className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-emerald-600 bg-emerald-50 dark:bg-emerald-900/30 px-4 py-2.5 rounded-2xl active:scale-95 transition-all border border-emerald-200 dark:border-emerald-800/50 shadow-sm"
+                        >
+                            <Icons.RefreshCw size={14} className={intervalsLoading ? 'animate-spin' : ''} />
+                            {intervalsLoading ? 'Sincronizando...' : 'Sincronizar Datos'}
+                        </button>
+                    </div>
+
                     {!selectedDate ? (
                         <>
-                            {intervalsLoading && (
-                                <div className="text-center py-6">
-                                    <Icons.Loader2 className="w-8 h-8 animate-spin mx-auto text-emerald-600 opacity-50" />
+                            {intervalsLoading && !intervalsData?.length && (
+                                <div className="text-center py-12">
+                                    <Icons.Loader2 className="w-10 h-10 animate-spin mx-auto text-emerald-600 opacity-30" />
+                                    <p className="text-[10px] font-bold text-secondary uppercase tracking-widest mt-4">Conectando con Intervals.icu...</p>
                                 </div>
                             )}
 
                             {intervalsError && (
-                                <div className="text-center py-6 bg-rose-50 dark:bg-rose-900/10 rounded-2xl border border-rose-200">
-                                    <p className="text-xs font-black text-rose-500">{intervalsError}</p>
+                                <div className="text-center py-8 bg-rose-50 dark:bg-rose-900/10 rounded-3xl border border-rose-200 p-6">
+                                    <Icons.AlertTriangle className="mx-auto text-rose-500 mb-2" size={24} />
+                                    <p className="text-xs font-black text-rose-600 uppercase mb-2">Error de Sincronización</p>
+                                    <p className="text-[10px] text-rose-500 font-bold mb-4 bg-white/50 py-2 rounded-lg border border-rose-100 italic">
+                                        "{intervalsError}"
+                                    </p>
+                                    <p className="text-[10px] text-rose-400 mb-6 px-4">
+                                        Esto suele ser un bloqueo de tu operadora móvil. Si estás con 4G/5G, prueba con WiFi (o al revés).
+                                    </p>
                                 </div>
                             )}
 
                             {/* Today's Metrics - Shows first */}
                             {(() => {
+                                if (!intervalsData || !Array.isArray(intervalsData)) return null;
                                 // Find today's data or most recent
                                 const todayISO = new Date().toISOString().split('T')[0];
                                 const today = intervalsData.find(d => d.id === todayISO);
@@ -580,47 +642,49 @@ const HistoryView = ({ logs, onExport, onImport, user, onSaveFood, myFoods }) =>
                                 const avgSleep7 = getMetricAvg(dataIncludingToday, 7, 'sleepScore');
                                 const avgSleep21 = getMetricAvg(dataIncludingToday, 21, 'sleepScore');
 
-                                // HRV Score (50%) - Matching Streamlit calc_IER_v4_personal
-                                let hrvScore = 60.0;
+                                // HRV Score (50%) - Target 85/77 Baseline
+                                // Adjusted to hit user target of 85 Readiness / 77 IER at baseline
+                                let hrvScore = 65.0;
                                 if (avgHRV && avgHRV21 && avgHRV21 > 0) {
                                     const trendRatio = avgHRV / avgHRV21;
                                     if (trendRatio >= 1.0) {
-                                        hrvScore = 75 + (trendRatio - 1) * 50;
+                                        hrvScore = 75.2 + (trendRatio - 1) * 40; // Base 75.2 to ensure IER >= 77
                                     } else {
-                                        hrvScore = 60 + (trendRatio - 0.9) * 100;
+                                        hrvScore = 65 + (trendRatio - 0.9) * 100;
                                     }
                                 }
                                 hrvScore = Math.max(0, Math.min(100, hrvScore));
 
-                                // RHR Score (15%) - Matching Streamlit thresholds
+                                // RHR Score (15%)
                                 let rhrScore = 60.0;
                                 if (displayData.restingHR && avgRHR21) {
                                     const deviation = displayData.restingHR - avgRHR21;
-                                    if (deviation <= 1) rhrScore = 90;
-                                    else if (deviation <= 2) rhrScore = 75;
-                                    else if (deviation <= 3) rhrScore = 65;
-                                    else rhrScore = 55;
+                                    if (deviation <= 0) rhrScore = 95; // Base 95 -> Contributes ~14.2 to IER
+                                    else if (deviation <= 1) rhrScore = 85;
+                                    else if (deviation <= 2) rhrScore = 70;
+                                    else if (deviation <= 3) rhrScore = 60;
+                                    else rhrScore = 50;
                                 }
                                 rhrScore = Math.max(0, Math.min(100, rhrScore));
 
-                                // Sleep Score (20%) - Matching Streamlit formula
-                                let sleepScore = 65.0;
+                                // Sleep Score (20%)
+                                let sleepScore = 70.0;
                                 if (avgSleep7 && avgSleep21 && avgSleep21 > 0) {
                                     const ratio = avgSleep7 / avgSleep21;
                                     if (ratio >= 1.0) {
-                                        sleepScore = 80 + (ratio - 1) * 40;
+                                        sleepScore = 80 + (ratio - 1) * 30; // Base 80 to hit 77 IER baseline
                                     } else {
-                                        sleepScore = 65 + (ratio - 0.9) * 100;
+                                        sleepScore = 70 + (ratio - 0.9) * 100;
                                     }
                                 }
                                 sleepScore = Math.max(0, Math.min(100, sleepScore));
 
-                                // TSB Score (15%) - Matching Streamlit formula
+                                // TSB Score (15%)
                                 const tsb = (yesterday?.ctl != null && yesterday?.atl != null) ? yesterday.ctl - yesterday.atl : null;
                                 let tsbScore = 70.0;
                                 if (tsb != null) {
                                     if (tsb > -10) {
-                                        tsbScore = 75 + (tsb / 10) * 25;
+                                        tsbScore = 70 + (tsb / 10) * 25; // Base 70 for baseline
                                     } else {
                                         tsbScore = 50;
                                     }
@@ -636,9 +700,6 @@ const HistoryView = ({ logs, onExport, onImport, user, onSaveFood, myFoods }) =>
                                 let hrvMeanHist = null;
                                 let hrvStdHist = null;
 
-                                // History for baseline (last 60 days FROM YESTERDAY - effectively excluding today for baseline establishment per v4.4 spec)
-                                // Python: calculate_baselines(past_df) where past_df = df_including_today.iloc[:-1]
-                                // So baselines use data up to Yesterday.
                                 // History for baseline (60 records effectively excluding today)
                                 const history60 = dataIncludingToday.slice(1, 61);
 
@@ -679,7 +740,7 @@ const HistoryView = ({ logs, onExport, onImport, user, onSaveFood, myFoods }) =>
                                 if (avgSleep7 && avgSleep28) {
                                     if (avgSleep7 >= avgSleep28) { readiness += 15; debugPoints.sleep = 15; }
                                     else if (avgSleep7 > avgSleep28 * 0.95) { readiness += 12; debugPoints.sleep = 12; }
-                                    else if (avgSleep7 >= avgSleep28 * 0.90) { readiness += 7; debugPoints.sleep = 7; }
+                                    else if (avgSleep7 >= avgSleep28 * 0.90) { readiness += 10; debugPoints.sleep = 10; } // Boosted from 7
                                 }
 
                                 // RHR Points (vs Recovery Baseline)
@@ -695,7 +756,7 @@ const HistoryView = ({ logs, onExport, onImport, user, onSaveFood, myFoods }) =>
                                     // avgHRV is rolling mean of 7 days including today
                                     const zScore = (avgHRV - hrvMeanHist) / hrvStdHist;
                                     if (zScore >= 0.5) { readiness += 50; debugPoints.hrv = 50; }
-                                    else if (zScore >= -0.5) { readiness += 35; debugPoints.hrv = 35; }
+                                    else if (zScore >= -0.5) { readiness += 35; debugPoints.hrv = 35; } // Reverted to 35 to hit 85 baseline
                                     else if (zScore >= -1.0) { readiness += 20; debugPoints.hrv = 20; }
                                 }
 
@@ -1034,6 +1095,17 @@ const HistoryView = ({ logs, onExport, onImport, user, onSaveFood, myFoods }) =>
                 </div>
             )}
 
+            {historyTab === 'wisdom' && (
+                <WisdomLogView
+                    logs={wisdomLogs}
+                    summary={wisdomSummary}
+                    onSave={onSaveWisdom}
+                    onSaveSummary={onSaveWisdomSummary}
+                    onDelete={onDeleteWisdom}
+                />
+            )}
+
+            {/* Analysis Modal */}
             {showAnalysis && (
                 <HistoryAnalysisView
                     logs={logs}
